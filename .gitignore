@@ -1,0 +1,73 @@
+# Binaries
+*.exe
+*.test
+
+# Test cache
+testcache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS — macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# OS — Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# OS — Linux
+*~
+*.swp
+*.swo
+.cache/
+.local/share/Trash/
+
+
+# Release readiness: canonical public-release patterns
+dist/
+build/
+target/
+bin/
+out/
+*.iml
+*.sublime-*
+coverage.*
+coverage/
+.test-results/
+*.test.log
+*.tmp
+*.bak
+*.log
+temp/
+tmp/
+node_modules/
+venv/
+.venv/
+vendor/
+.env*
+*.pem
+*.key
+local-metadata.md
+RELEASE_SUMMARY.md
+.crush/
+.playwright-mcp/
+*.db
+*.db-wal
+*.db-shm
+**/http-client.private.env.json
