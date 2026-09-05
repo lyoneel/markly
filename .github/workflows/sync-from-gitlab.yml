@@ -14,6 +14,8 @@ jobs:
           set -euo pipefail
           git clone https://github.com/lyoneel/markly.git repo
           cd repo
+          git config user.name 'Sync Bot'
+          git config user.email 'sync-bot@localhost'
           git fetch https://gitlab.com/lyoneel/markly.git '+refs/heads/*:refs/remotes/gitlab/*' '+refs/tags/*:refs/tags/*'
           if git show-ref --verify --quiet refs/remotes/gitlab/master; then
             git merge --no-ff --no-edit --allow-unrelated-histories gitlab/master
