@@ -27,4 +27,11 @@ jobs:
             fi
             git push --force origin "refs/remotes/gitlab/$b:refs/heads/$name"
           done
+          for t in $(git tag -l); do
+            if [ "$(git cat-file -t "$t")" = "commit" ]; then
+              target=$(git rev-parse "$t^{commit}")
+              git tag -d "$t" >/dev/null
+              git tag -a "$t" -m "synced from gitlab.com" "$target"
+            fi
+          done
           git push --force origin 'refs/tags/*:refs/tags/*'
