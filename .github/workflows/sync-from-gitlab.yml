@@ -20,7 +20,7 @@ jobs:
             git merge --no-ff --no-edit --allow-unrelated-histories gitlab/master
             git push --force origin master
           fi
-          for b in $(git for-each-ref --format='$(refname:short)' refs/remotes/gitlab); do
+          for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/gitlab); do
             if [ "$b" = "master" ]; then
               continue
             fi
