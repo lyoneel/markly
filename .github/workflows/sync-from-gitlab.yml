@@ -1,5 +1,5 @@
 name: sync-from-gitlab
-on:
+ on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch: {}
@@ -7,8 +7,23 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Env probe
+      - name: Sync from GitLab
         run: |
-          printenv | grep -o '^[A-Za-z_]*' | sort -u | tr '\n' ' '
-          echo
-          if [ -n "${GITHUB_TOKEN+x}" ]; then echo "GITHUB_TOKEN: present"; else echo "GITHUB_TOKEN: ABSENT"; fi
+          set -euo pipefail
+          git clone https://github.com/lyoneel/markly.git repo
+          cd repo
+          git config user.name 'Sync Bot'
+          git config user.email 'sync-bot@localhost'
+          git remote set-url origin "https://x-access-token:${{ secrets.SYNC_PUSH_TOKEN }}@github.com/lyoneel/markly.git"
+          git fetch https://gitlab.com/lyoneel/markly.git '+refs/heads/*:refs/remotes/gitlab/*' '+refs/tags/*:refs/tags/*'
+          if git show-ref --verify --quiet refs/remotes/gitlab/master; then
+            git merge --no-ff --no-edit --allow-unrelated-histories gitlab/master
+            git push --force origin master
+          fi
+          for b in $(git for-each-ref --format='$(refname:short)' refs/remotes/gitlab); do
+            if [ "$b" = "master" ]; then
+              continue
+            fi
+            git push --force origin "refs/remotes/gitlab/$b:refs/heads/$b"
+          done
+          git push --force origin 'refs/tags/*:refs/tags/*'
