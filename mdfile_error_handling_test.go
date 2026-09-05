@@ -23,6 +23,10 @@ func TestFileNotFound(t *testing.T) {
 
 // TestPermissionDenied tests error handling when file has no read permissions.
 func TestPermissionDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("Skipping permission test: root bypasses file permission bits")
+	}
+
 	content := `---
 name: test-doc
 ---
