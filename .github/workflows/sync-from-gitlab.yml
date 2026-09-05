@@ -21,9 +21,10 @@ jobs:
             git push --force origin master
           fi
           for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/gitlab); do
-            if [ "$b" = "master" ]; then
+            name=${b#gitlab/}
+            if [ "$name" = "master" ]; then
               continue
             fi
-            git push --force origin "refs/remotes/gitlab/$b:refs/heads/$b"
+            git push --force origin "refs/remotes/gitlab/$b:refs/heads/$name"
           done
           git push --force origin 'refs/tags/*:refs/tags/*'
