@@ -13,6 +13,7 @@ jobs:
         run: |
           set -euo pipefail
           git clone https://github.com/lyoneel/markly.git repo
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/lyoneel/markly.git"
           cd repo
           git config user.name 'Sync Bot'
           git config user.email 'sync-bot@localhost'
