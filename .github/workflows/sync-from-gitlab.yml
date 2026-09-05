@@ -3,8 +3,6 @@ on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch: {}
-permissions:
-  contents: write
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -13,10 +11,10 @@ jobs:
         run: |
           set -euo pipefail
           git clone https://github.com/lyoneel/markly.git repo
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/lyoneel/markly.git"
           cd repo
           git config user.name 'Sync Bot'
           git config user.email 'sync-bot@localhost'
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/lyoneel/markly.git"
           git fetch https://gitlab.com/lyoneel/markly.git '+refs/heads/*:refs/remotes/gitlab/*' '+refs/tags/*:refs/tags/*'
           if git show-ref --verify --quiet refs/remotes/gitlab/master; then
             git merge --no-ff --no-edit --allow-unrelated-histories gitlab/master
