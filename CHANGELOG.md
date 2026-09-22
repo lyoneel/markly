@@ -2,6 +2,16 @@
 
 All notable changes in the markly project are documented in this file. The format is based on Keep a Changelog, and the project follows Semantic Versioning.
 
+## v1.4.0 - 2026-09-22
+
+### Added
+
+- `ParseFrontmatter(text)`: one-shot frontmatter parse returning the metadata plus the body after the block; returns `ErrNoFrontmatter` when the delimiters are absent and a `FrontmatterError` (document line plus wrapped error) when the block fails to parse. `GetMetadata` keeps its current contract
+- Coercing metadata accessors: `GetCoercedString` reads numeric scalars as their decimal text, `GetCoercedInt` reads decimal strings as ints; `GetString` and `GetInt` keep their semantics
+- `WithStrictDuplicates()` option: a repeated top-level frontmatter key fails the parse with a `FrontmatterError` naming the key and the line of the repeat; without the option, behavior is unchanged
+- `FindSectionBody(slug)`: the text of a `##` section up to the next heading of the same or higher level, with leading and trailing blank lines trimmed
+- New `validate` sub-package: schema-driven frontmatter validation using the `fields`/`config` schema format. Generic shapes (string, single, list, objects, object, case, date, number, boolean), value vocabularies through `from` references resolved at load time, pluggable domain shapes through `ShapeFunc` registration, and typed `Issue{File, Field, Reason}` findings; `ValidateFile` and `ValidateDir` cover one document, a directory tree, or a glob
+
 ## v1.3.0 - 2026-09-22
 
 ### Added
