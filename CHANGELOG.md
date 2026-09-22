@@ -2,6 +2,12 @@
 
 All notable changes in the markly project are documented in this file. The format is based on Keep a Changelog, and the project follows Semantic Versioning.
 
+## v1.3.0 - 2026-09-22
+
+### Added
+
+- Package-level `SplitFrontmatter(text)` helper: split a markdown document into the raw frontmatter block (without delimiters) and the body after it; supports the YAML and TOML delimiter formats and reports whether frontmatter exists. No change to existing APIs
+
 ## v1.2.0 - 2026-08-17
 
 ### Changed
