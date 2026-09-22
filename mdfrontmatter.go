@@ -106,7 +106,16 @@ func ParseFrontmatter(text string) (*MDMetadata, string, error) {
 	if err != nil {
 		return nil, body, newFrontmatterError(err)
 	}
-	return NewMDMetadataWithFormat(data, 2, len(lines)+1, format), body, nil
+	meta := NewMDMetadataWithFormat(data, 2, len(lines)+1, format)
+	if format == FMTypeYAML {
+		// Attach the node tree so the style introspection helpers
+		// (IsFlowSequence, IsFlowMapping, IsBlockScalar) work on the
+		// parsed metadata, matching the file loader behavior.
+		if root, nodeErr := parseYamlNode(lines); nodeErr == nil {
+			meta.root = root
+		}
+	}
+	return meta, body, nil
 }
 
 // parseFrontmatterYAML unmarshals frontmatter lines as YAML into a

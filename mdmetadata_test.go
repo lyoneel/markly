@@ -256,3 +256,48 @@ func TestGetCoercedInt(t *testing.T) {
 		}
 	}
 }
+
+// TestIsFlowMapping and TestIsBlockScalar cover the style
+// introspection helpers over flow and block forms.
+func TestIsFlowMapping(t *testing.T) {
+	f := NewMDFileFromString("---\nflow: {a: 1, b: 2}\nblock:\n  a: 1\n  b: 2\nscalar: text\n---\n\nbody\n")
+	meta, err := f.GetMetadata()
+	if err != nil {
+		t.Fatalf("GetMetadata error: %v", err)
+	}
+	if !meta.IsFlowMapping("flow") {
+		t.Error("IsFlowMapping(flow) = false, want true")
+	}
+	if meta.IsFlowMapping("block") {
+		t.Error("IsFlowMapping(block) = true, want false")
+	}
+	if meta.IsFlowMapping("scalar") {
+		t.Error("IsFlowMapping(scalar) = true, want false (not a mapping)")
+	}
+	if meta.IsFlowMapping("missing") {
+		t.Error("IsFlowMapping(missing) = true, want false")
+	}
+}
+
+func TestIsBlockScalar(t *testing.T) {
+	f := NewMDFileFromString("---\nliteral: |\n  line one\n  line two\nfolded: >-\n  folded text\nplain: one line\nquoted: 'also one line'\n---\n\nbody\n")
+	meta, err := f.GetMetadata()
+	if err != nil {
+		t.Fatalf("GetMetadata error: %v", err)
+	}
+	if !meta.IsBlockScalar("literal") {
+		t.Error("IsBlockScalar(literal) = false, want true")
+	}
+	if !meta.IsBlockScalar("folded") {
+		t.Error("IsBlockScalar(folded) = false, want true")
+	}
+	if meta.IsBlockScalar("plain") {
+		t.Error("IsBlockScalar(plain) = true, want false")
+	}
+	if meta.IsBlockScalar("quoted") {
+		t.Error("IsBlockScalar(quoted) = true, want false")
+	}
+	if meta.IsBlockScalar("missing") {
+		t.Error("IsBlockScalar(missing) = true, want false")
+	}
+}
