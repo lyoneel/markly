@@ -289,13 +289,50 @@ md.SetFirstHeading("New Title")          // replace, or insert after frontmatter
 
 ```go
 line, found := md.FindSection("my-section")      // slug lookup, file line number
+body, found := md.FindSectionBody("my-section")  // slug lookup, section text
 md.SetSectionHeading("my-section", "Renamed")    // rename "## My Section"
 md.SetSectionBullet("my-section", "status", "done")  // replace/insert "- status: done"
 md.InsertLineUnderHeading("My Section", "- [ ] moved", true)  // true: create if missing
 ```
 
+`FindSectionBody` returns the section text up to the next heading of
+the same or higher level, with leading and trailing blank lines
+trimmed.
+
 `SlugHeading("My Section!")` produces the stable slug `my-section`
 (lowercase, non-alphanumeric runs collapsed to one hyphen).
+
+### Frontmatter Parsing with Errors
+
+`GetMetadata` treats every parse failure the same way (nil metadata).
+When callers need to tell the failure modes apart, use the one-shot
+parse:
+
+```go
+meta, body, err := markly.ParseFrontmatter(text)
+if errors.Is(err, markly.ErrNoFrontmatter) {
+    // no delimiter block at all
+}
+var fmErr *markly.FrontmatterError
+if errors.As(err, &fmErr) {
+    // fmErr.Line points at the document line that broke the parse
+}
+```
+
+Coercing accessors read YAML int-typed scalars (dates) and decimal
+strings without changing `GetString` semantics:
+
+```go
+meta.GetCoercedString("date")  // int scalar 20260922 -> "20260922"
+meta.GetCoercedInt("count")    // string "42" -> 42
+```
+
+Strict duplicate-key detection is opt-in:
+
+```go
+md := markly.NewMDFileFromString(text, markly.WithStrictDuplicates())
+// a repeated top-level key fails with *markly.FrontmatterError
+```
 
 ### Checkboxes
 
@@ -415,6 +452,45 @@ func main() {
 | Use case | Directory scanning, metadata filtering | Single-file processing, immediate content needs |
 
 **Recommendation:** Use lazy loading for directory operations (`MDFolder`), eager loading when you need content immediately.
+
+## Schema Validation
+
+The `validate` sub-package checks frontmatter against a schema file: a
+markdown document whose frontmatter carries a `fields` map and an
+optional `config` map of format constants.
+
+```yaml
+fields:
+  title: {required: true, shape: string}
+  status: {required: true, shape: single, values: [draft, done]}
+  tags: {required: false, shape: list, from: tag-vocabulary}
+  sources: {required: true, shape: objects, keys: [name, url]}
+  created: {required: true, shape: date}
+```
+
+```go
+schema, err := validate.LoadSchema("schema.md")
+if err != nil {
+    return err
+}
+issues := schema.ValidateDocument("note.md", data)   // one document
+issues, err = schema.ValidateDir("docs/")            // file, directory, or glob
+```
+
+Each issue carries `File`, `Field`, and `Reason`. Generic shapes cover
+string, single, list, objects, object, case, date, number, and
+boolean. `from` references resolve at load time to the controlled
+vocabulary files next to the schema. Domain-specific shapes register
+through `ShapeFunc` and receive the schema's `Ctx` value, so domain
+semantics stay caller-side:
+
+```go
+schema.Ctx = myIndex
+schema.RegisterShape("game", func(ctx any, field validate.Field, value any) []validate.Issue {
+    // custom validation over ctx
+    return nil
+})
+```
 
 ## License
 
