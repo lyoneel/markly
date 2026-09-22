@@ -30,6 +30,7 @@ type Field struct {
 	Values   []string // inline vocabulary, single and list shapes
 	From     string   // vocabulary reference resolved against the schema location
 	Keys     []string // required keys, object and objects shapes
+	Inline   bool     // YAML style rule: flow sequences, flow mappings, no block scalars
 }
 
 // Schema is a loaded schema: the ordered field rules, the config
@@ -102,6 +103,7 @@ func LoadSchema(path string) (*Schema, error) {
 		if field.Shape == "" {
 			field.Shape = "string"
 		}
+		field.Inline, _ = rules["inline"].(bool)
 		if from, _ := rules["from"].(string); from != "" {
 			field.From = from
 		}

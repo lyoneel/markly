@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"gitlab.com/lyoneel/markly"
 )
 
 func TestLoadSchemaThreadsFixture(t *testing.T) {
@@ -343,4 +346,162 @@ func indexOf(s, part string) int {
 
 func stringsContains(s, part string) bool {
 	return indexOf(s, part) >= 0
+}
+
+func inlineTestSchema(t *testing.T) *Schema {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "schema.md")
+	content := "---\nfields:\n  tags: {required: true, shape: list, inline: true}\n  sources: {required: false, shape: objects, inline: true}\n  meta: {required: false, shape: object, inline: true}\n  price: {required: false, shape: case, inline: true}\n  title: {required: false, shape: string, inline: true}\n  plain: {required: false, shape: list}\n---\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := LoadSchema(path)
+	if err != nil {
+		t.Fatalf("LoadSchema: %v", err)
+	}
+	return schema
+}
+
+func metadataFromDoc(t *testing.T, text string) *markly.MDMetadata {
+	t.Helper()
+	meta, _, err := markly.ParseFrontmatter(text)
+	if err != nil {
+		t.Fatalf("ParseFrontmatter: %v", err)
+	}
+	return meta
+}
+
+func TestValidateMetadataInline(t *testing.T) {
+	schema := inlineTestSchema(t)
+
+	tests := []struct {
+		name      string
+		text      string
+		wantField string
+		wantPart  string
+	}{
+		{
+			name: "flow list passes",
+			text: "---\ntags: [a, b]\n---\n",
+		},
+		{
+			name:      "block list flags",
+			text:      "---\ntags:\n  - a\n  - b\n---\n",
+			wantField: "tags",
+			wantPart:  "must be an inline list",
+		},
+		{
+			name: "flow objects pass",
+			text: "---\ntags: [a]\nsources: [{name: n, url: u}]\n---\n",
+		},
+		{
+			name:      "block objects flag",
+			text:      "---\ntags: [a]\nsources:\n  - name: n\n    url: u\n---\n",
+			wantField: "sources",
+			wantPart:  "must be an inline list",
+		},
+		{
+			name: "flow object map passes",
+			text: "---\ntags: [a]\nmeta: {id: s1}\n---\n",
+		},
+		{
+			name:      "block object map flags",
+			text:      "---\ntags: [a]\nmeta:\n  id: s1\n---\n",
+			wantField: "meta",
+			wantPart:  "must be an inline map",
+		},
+		{
+			name: "flow case map passes",
+			text: "---\ntags: [a]\nprice: {usd: \"9.99\"}\n---\n",
+		},
+		{
+			name:      "block case map flags",
+			text:      "---\ntags: [a]\nprice:\n  usd: 9.99\n---\n",
+			wantField: "price",
+			wantPart:  "must be an inline map",
+		},
+		{
+			name: "plain string passes the inline string rule",
+			text: "---\ntags: [a]\ntitle: one line\n---\n",
+		},
+		{
+			name: "quoted string passes the inline string rule",
+			text: "---\ntags: [a]\ntitle: 'also one line'\n---\n",
+		},
+		{
+			name:      "block scalar string flags",
+			text:      "---\ntags: [a]\ntitle: |\n  line one\n  line two\n---\n",
+			wantField: "title",
+			wantPart:  "must be an inline string",
+		},
+		{
+			name: "missing optional inline field stays silent",
+			text: "---\ntags: [a]\n---\n",
+		},
+		{
+			name:      "missing required inline list reports only the shape issue",
+			text:      "---\n---\n",
+			wantField: "tags",
+			wantPart:  "missing required field tags",
+		},
+		{
+			name:      "non-list value under inline reports only the shape issue",
+			text:      "---\ntags: not-a-list\n---\n",
+			wantField: "tags",
+			wantPart:  "must be a list",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta := metadataFromDoc(t, tt.text)
+			issues := schema.ValidateMetadata("x.md", meta)
+			if tt.wantPart == "" {
+				if len(issues) != 0 {
+					t.Errorf("issues = %v, want none", issues)
+				}
+				return
+			}
+			found := false
+			for _, issue := range issues {
+				if issue.Field == tt.wantField && strings.Contains(issue.Reason, tt.wantPart) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("issues = %v, want field %q reason containing %q", issues, tt.wantField, tt.wantPart)
+			}
+		})
+	}
+}
+
+// TestValidateDocumentIgnoresInline documents the boundary: the plain
+// data map carries no style information, so the inline rule applies
+// only through ValidateMetadata.
+func TestValidateDocumentIgnoresInline(t *testing.T) {
+	schema := inlineTestSchema(t)
+	issues := schema.ValidateDocument("x.md", map[string]any{"tags": []any{"a", "b"}})
+	if len(issues) != 0 {
+		t.Errorf("issues = %v, want none (style needs ValidateMetadata)", issues)
+	}
+}
+
+// TestValidateMetadataInlineTOMLSkip verifies the style rule skips
+// TOML frontmatter, which has no block style.
+func TestValidateMetadataInlineTOMLSkip(t *testing.T) {
+	schema := inlineTestSchema(t)
+	meta := metadataFromDoc(t, "+++\ntags = ['a', 'b']\n+++\n")
+	if issues := schema.ValidateMetadata("x.md", meta); len(issues) != 0 {
+		t.Errorf("issues = %v, want none (TOML has no block style)", issues)
+	}
+}
+
+// TestValidateMetadataUndeclaredInlineStaysSilent verifies fields
+// without the inline rule accept both styles.
+func TestValidateMetadataUndeclaredInlineStaysSilent(t *testing.T) {
+	schema := inlineTestSchema(t)
+	meta := metadataFromDoc(t, "---\ntags: [a]\nplain:\n  - x\n  - y\n---\n")
+	if issues := schema.ValidateMetadata("x.md", meta); len(issues) != 0 {
+		t.Errorf("issues = %v, want none (inline not declared on plain)", issues)
+	}
 }

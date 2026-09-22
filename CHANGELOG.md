@@ -2,6 +2,13 @@
 
 All notable changes in the markly project are documented in this file. The format is based on Keep a Changelog, and the project follows Semantic Versioning.
 
+## Unreleased
+
+### Added
+
+- YAML style introspection on metadata: `IsFlowMapping(key)` and `IsBlockScalar(key)` join `IsFlowSequence`, and `ParseFrontmatter` now attaches the node tree so the style helpers work on its result
+- The `validate` sub-package supports an `inline: true` field rule with `Schema.ValidateMetadata(name, meta)`: list and objects fields must be flow lists (`[a, b]`), object and case fields must be flow maps (`{a: 1}`), and string fields must not be block scalars (`|`, `>`). The style checks run on YAML frontmatter only; `ValidateDocument` on the plain data map stays style-blind
+
 ## v1.4.0 - 2026-09-22
 
 ### Added
