@@ -164,6 +164,66 @@ func (s *Schema) ValidateDocument(name string, data map[string]any) []Issue {
 	return issues
 }
 
+// ValidateMetadata validates one document's frontmatter through the
+// parsed metadata and adds the style checks the plain data map cannot
+// carry. A field declaring inline: true enforces, per shape:
+//
+//   - list and objects: the sequence must be a flow list ([a, b])
+//   - object and case: the mapping must be a flow map ({a: 1})
+//   - string: the value must not be a block scalar (| or >)
+//
+// The shape checks run on the decoded data exactly as in
+// ValidateDocument. Style checks apply to YAML frontmatter only; TOML
+// has no block style and always satisfies the rule. Missing fields and
+// non-list or non-map values stay with the shape checks, so a value
+// reports at most one style finding.
+func (s *Schema) ValidateMetadata(name string, meta *markly.MDMetadata) []Issue {
+	if meta == nil {
+		// No frontmatter block: nothing to style-check.
+		return s.ValidateDocument(name, map[string]any{})
+	}
+	data := meta.Data()
+	issues := s.ValidateDocument(name, data)
+	if meta.GetType() != "yaml" {
+		return issues
+	}
+	for _, field := range s.Fields {
+		styleIssue := s.inlineStyleIssue(name, field, data, meta)
+		if styleIssue != "" {
+			issues = append(issues, Issue{File: name, Field: field.Name, Reason: styleIssue})
+		}
+	}
+	return issues
+}
+
+// inlineStyleIssue returns the reason for an inline rule violation on
+// one field, or "" when the value satisfies the rule or the shape
+// carries no style meaning.
+func (s *Schema) inlineStyleIssue(name string, field Field, data map[string]any, meta *markly.MDMetadata) string {
+	if !field.Inline {
+		return ""
+	}
+	value, present := data[field.Name]
+	if !present || value == nil {
+		return ""
+	}
+	switch field.Shape {
+	case "list", "objects":
+		if _, isList := value.([]any); isList && !meta.IsFlowSequence(field.Name) {
+			return fmt.Sprintf("%s must be an inline list", field.Name)
+		}
+	case "object", "case":
+		if _, isMap := value.(map[string]any); isMap && !meta.IsFlowMapping(field.Name) {
+			return fmt.Sprintf("%s must be an inline map", field.Name)
+		}
+	case "string":
+		if _, isStr := value.(string); isStr && meta.IsBlockScalar(field.Name) {
+			return fmt.Sprintf("%s must be an inline string", field.Name)
+		}
+	}
+	return ""
+}
+
 // ValidateFile parses and validates one markdown document. Parse
 // problems surface as document-level issues; the error return covers
 // only read failures.

@@ -492,6 +492,30 @@ schema.RegisterShape("game", func(ctx any, field validate.Field, value any) []va
 })
 ```
 
+### Inline Style Rules
+
+A field declaring `inline: true` pins the YAML style of its value.
+`ValidateDocument` sees only the decoded data, where style is lost, so
+the style checks run through `ValidateMetadata` on the parsed
+metadata:
+
+| Shape | `inline: true` means |
+|-------|---------------------|
+| `list`, `objects` | the sequence must be a flow list: `tags: [a, b]` |
+| `object`, `case` | the mapping must be a flow map: `meta: {id: 1}` |
+| `string` | no block scalars: `\|` and `>` are rejected |
+
+```go
+meta, _, err := markly.ParseFrontmatter(text)
+if err != nil {
+    return err
+}
+issues := schema.ValidateMetadata("note.md", meta)
+```
+
+The style checks apply to YAML frontmatter only; TOML has no block
+style and always satisfies the rule.
+
 ## License
 
 MIT License - See [LICENSE](LICENSE) file for details.
