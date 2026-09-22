@@ -35,6 +35,41 @@ func (md *MDFile) sectionBodyIndex(slug string) int {
 	return -1
 }
 
+// FindSectionBody returns the text of the `## slug` section: the lines
+// after the heading up to, but excluding, the next heading of the same
+// or higher level. Leading and trailing blank lines are trimmed;
+// internal blank lines stay. found is false when the slug matches no
+// section.
+func (md *MDFile) FindSectionBody(slug string) (string, bool) {
+	if err := md.ensureBodyLoaded(); err != nil {
+		return "", false
+	}
+	idx := md.sectionBodyIndex(slug)
+	if idx < 0 {
+		return "", false
+	}
+	lines := md.bodyLines()
+	level, _ := md.isHeading(lines[idx])
+	end := len(lines)
+	for j := idx + 1; j < len(lines); j++ {
+		if next, _ := md.isHeading(lines[j]); next > 0 && next <= level {
+			end = j
+			break
+		}
+	}
+	start := idx + 1
+	for start < end && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	if start >= end {
+		return "", true
+	}
+	return strings.Join(lines[start:end], "\n"), true
+}
+
 // SetSectionHeading renames the `## ` heading identified by slug.
 func (md *MDFile) SetSectionHeading(slug, newTitle string) error {
 	if err := md.ensureBodyLoaded(); err != nil {
