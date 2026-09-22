@@ -177,3 +177,82 @@ func TestMDMetadataPersistence(t *testing.T) {
 	// Note: Full persistence test requires file I/O which is tested separately in mdfile_test.go
 	// This test verifies the modified flag and data integrity
 }
+
+// TestGetCoercedString tests string conversion over typed scalars.
+func TestGetCoercedString(t *testing.T) {
+	m := NewMDMetadata(map[string]any{
+		"str":    "text",
+		"int":    20260922,
+		"int64v": int64(7),
+		"float":  450.5,
+		"bool":   true,
+		"nilv":   nil,
+	}, 0, 0)
+
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{"str", "text"},
+		{"int", "20260922"},
+		{"int64v", "7"},
+		{"float", "450.5"},
+		{"bool", ""},
+		{"nilv", ""},
+		{"missing", ""},
+	}
+	for _, tt := range tests {
+		if got := m.GetCoercedString(tt.key); got != tt.want {
+			t.Errorf("GetCoercedString(%q) = %q, want %q", tt.key, got, tt.want)
+		}
+	}
+}
+
+// TestGetCoercedStringYamlDates documents the distinction from GetString
+// over YAML int-typed dates.
+func TestGetCoercedStringYamlDates(t *testing.T) {
+	f := NewMDFileFromString("---\ndate: 20260922\nscore: 3.5\n---\n\nbody\n")
+	meta, err := f.GetMetadata()
+	if err != nil {
+		t.Fatalf("GetMetadata error: %v", err)
+	}
+	if meta.GetString("date") != "" {
+		t.Errorf("GetString(date) = %q, want \"\" (unchanged semantics)", meta.GetString("date"))
+	}
+	if got := meta.GetCoercedString("date"); got != "20260922" {
+		t.Errorf("GetCoercedString(date) = %q, want %q", got, "20260922")
+	}
+	if got := meta.GetCoercedString("score"); got != "3.5" {
+		t.Errorf("GetCoercedString(score) = %q, want %q", got, "3.5")
+	}
+}
+
+// TestGetCoercedInt tests int conversion over strings and floats.
+func TestGetCoercedInt(t *testing.T) {
+	m := NewMDMetadata(map[string]any{
+		"str":    "20260922",
+		"strbad": "not-a-number",
+		"int":    5,
+		"int64v": int64(9),
+		"float":  2.75,
+		"bool":   true,
+	}, 0, 0)
+
+	tests := []struct {
+		key  string
+		want int
+	}{
+		{"str", 20260922},
+		{"strbad", 0},
+		{"int", 5},
+		{"int64v", 9},
+		{"float", 2},
+		{"bool", 0},
+		{"missing", 0},
+	}
+	for _, tt := range tests {
+		if got := m.GetCoercedInt(tt.key); got != tt.want {
+			t.Errorf("GetCoercedInt(%q) = %d, want %d", tt.key, got, tt.want)
+		}
+	}
+}

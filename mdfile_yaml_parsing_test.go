@@ -1,7 +1,9 @@
 package markly
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -650,4 +652,65 @@ name = "second"
 			}
 		})
 	}
+}
+
+// TestWithStrictDuplicates verifies duplicate top-level key rejection.
+func TestWithStrictDuplicates(t *testing.T) {
+	doc := "---\ntitle: first\ntitle: second\n---\n\nbody\n"
+
+	t.Run("strict mode reports the duplicate", func(t *testing.T) {
+		path := createTempFile(t, doc)
+		defer os.Remove(path)
+
+		_, err := NewMDFileWithContent(path, WithStrictDuplicates())
+		if err == nil {
+			t.Fatal("err = nil, want a duplicate key error")
+		}
+		var fmErr *FrontmatterError
+		if !errors.As(err, &fmErr) {
+			t.Fatalf("err = %v of type %T, want *FrontmatterError", err, err)
+		}
+		if fmErr.Line != 3 {
+			t.Errorf("Line = %d, want 3 (the repeated key line)", fmErr.Line)
+		}
+		if !strings.Contains(fmErr.Error(), `duplicate frontmatter key "title"`) {
+			t.Errorf("error = %q, want it to name the key", fmErr.Error())
+		}
+	})
+
+	t.Run("strict mode is off by default", func(t *testing.T) {
+		path := createTempFile(t, doc)
+		defer os.Remove(path)
+
+		_, err := NewMDFileWithContent(path)
+		if err == nil {
+			t.Fatal("err = nil, want the native yaml duplicate-key error")
+		}
+		var fmErr *FrontmatterError
+		if errors.As(err, &fmErr) {
+			t.Errorf("err = %v, want a non-FrontmatterError (strict check inactive)", err)
+		}
+		if !strings.Contains(err.Error(), "already defined") {
+			t.Errorf("err = %v, want the native yaml duplicate-key error", err)
+		}
+	})
+
+	t.Run("duplicate nested keys are allowed under strict mode", func(t *testing.T) {
+		doc := "---\ntop: 1\nnested:\n  k: 1\n  k: 2\n---\n\nbody\n"
+		path := createTempFile(t, doc)
+		defer os.Remove(path)
+
+		f, err := NewMDFileWithContent(path, WithStrictDuplicates(), WithRawScalars())
+		if err != nil {
+			t.Fatalf("err = %v, want nil (nested keys stay outside the check)", err)
+		}
+		meta, err := f.GetMetadata()
+		if err != nil {
+			t.Fatalf("GetMetadata error: %v", err)
+		}
+		nested := meta.GetMap("nested")
+		if nested == nil || nested["k"] != int64(2) {
+			t.Errorf("nested = %v, want last-win k=2", nested)
+		}
+	})
 }

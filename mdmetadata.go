@@ -2,6 +2,8 @@ package markly
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -104,6 +106,56 @@ func (m *MDMetadata) GetMap(key string) map[string]any {
 		}
 	}
 	return nil
+}
+
+// GetCoercedString returns the value for key converted to a string.
+// Numeric scalars (int, int64, float64) convert to their decimal text
+// so YAML int-typed dates read back as "20260922" instead of "". Keys
+// that are missing or not convertible fall back to the GetString
+// behavior and return "".
+func (m *MDMetadata) GetCoercedString(key string) string {
+	v, ok := m.data[key]
+	if !ok {
+		return ""
+	}
+	switch s := v.(type) {
+	case string:
+		return s
+	case int:
+		return strconv.Itoa(s)
+	case int64:
+		return strconv.FormatInt(s, 10)
+	case float64:
+		return strconv.FormatFloat(s, 'f', -1, 64)
+	default:
+		return ""
+	}
+}
+
+// GetCoercedInt returns the value for key converted to an int. Numeric
+// scalars convert directly, decimal strings ("20260922") parse through
+// strconv.Atoi, and every other input returns 0.
+func (m *MDMetadata) GetCoercedInt(key string) int {
+	v, ok := m.data[key]
+	if !ok {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(n))
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
 }
 
 // UnmarshalInto unmarshals the metadata into a custom struct using yaml tags.

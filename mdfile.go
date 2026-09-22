@@ -209,6 +209,8 @@ type MDFile struct {
 	rawScalars bool // keep date-like scalars as original text
 	fenceAware bool // skip headings inside fenced code blocks
 
+	strictDuplicates bool // reject duplicate top-level frontmatter keys
+
 	serializer func(map[string]any) (string, error) // custom YAML frontmatter serializer
 }
 
@@ -473,6 +475,15 @@ func WithFenceAwareHeadings() FileOption {
 	return func(md *MDFile) { md.fenceAware = true }
 }
 
+// WithStrictDuplicates rejects documents whose frontmatter repeats a
+// top-level key. The parse fails with a *FrontmatterError naming the
+// key and the line of the repeat. Without the option, behavior stays
+// as before: the standard YAML path reports duplicates through its own
+// unmarshal errors and the raw-scalar path lets the last value win.
+func WithStrictDuplicates() FileOption {
+	return func(md *MDFile) { md.strictDuplicates = true }
+}
+
 // openReader returns the reader to parse from: the in-memory source
 // when set, otherwise the file at md.path. The returned closer is nil
 // for in-memory sources.
@@ -509,6 +520,12 @@ func (md *MDFile) processMetadata() error {
 	if len(frontmatterLines) == 0 {
 		md.contentFrom = 1 // No frontmatter, content starts at line 1
 		return nil         // No metadata
+	}
+
+	if md.strictDuplicates && format == "yaml" {
+		if dupErr := checkDuplicateYamlKeys(frontmatterLines); dupErr != nil {
+			return dupErr
+		}
 	}
 
 	if md.rawScalars && format == "yaml" {
