@@ -184,18 +184,40 @@ func (m *MDMetadata) Data() map[string]any {
 // written in flow style ([a, b]). Returns false when the key is
 // missing, not a sequence, or the frontmatter is not YAML.
 func (m *MDMetadata) IsFlowSequence(key string) bool {
+	node := m.valueNode(key)
+	return node != nil && node.Kind == yaml.SequenceNode && node.Style&yaml.FlowStyle != 0
+}
+
+// IsFlowMapping reports whether the value of key is a YAML mapping
+// written in flow style ({a: 1}). Returns false when the key is
+// missing, not a mapping, or the frontmatter is not YAML.
+func (m *MDMetadata) IsFlowMapping(key string) bool {
+	node := m.valueNode(key)
+	return node != nil && node.Kind == yaml.MappingNode && node.Style&yaml.FlowStyle != 0
+}
+
+// IsBlockScalar reports whether the value of key is a block scalar,
+// written with the literal (|) or folded (>) indicator instead of on a
+// single line. Returns false when the key is missing or the
+// frontmatter is not YAML.
+func (m *MDMetadata) IsBlockScalar(key string) bool {
+	node := m.valueNode(key)
+	return node != nil && node.Kind == yaml.ScalarNode && node.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0
+}
+
+// valueNode returns the top-level value node for key, or nil when the
+// key is absent or no node tree is available.
+func (m *MDMetadata) valueNode(key string) *yaml.Node {
 	mapping := m.rootMapping()
 	if mapping == nil {
-		return false
+		return nil
 	}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value != key {
-			continue
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
 		}
-		val := mapping.Content[i+1]
-		return val.Kind == yaml.SequenceNode && val.Style&yaml.FlowStyle != 0
 	}
-	return false
+	return nil
 }
 
 // HasBlockScalarSequence reports whether the frontmatter contains at

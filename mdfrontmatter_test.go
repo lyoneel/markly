@@ -265,3 +265,20 @@ func TestParseFrontmatterMatchesGetMetadata(t *testing.T) {
 		})
 	}
 }
+
+// TestParseFrontmatterAttachesNodeTree verifies the style
+// introspection helpers work on ParseFrontmatter metadata, matching
+// the file loader behavior.
+func TestParseFrontmatterAttachesNodeTree(t *testing.T) {
+	text := "---\ntags: [a, b]\nmeta:\n  k: 1\n---\n\nbody\n"
+	meta, _, err := ParseFrontmatter(text)
+	if err != nil {
+		t.Fatalf("ParseFrontmatter error: %v", err)
+	}
+	if !meta.IsFlowSequence("tags") {
+		t.Error("IsFlowSequence(tags) = false, want true")
+	}
+	if meta.IsFlowMapping("meta") {
+		t.Error("IsFlowMapping(meta) = true, want false (block mapping)")
+	}
+}
