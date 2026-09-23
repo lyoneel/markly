@@ -2,7 +2,7 @@
 
 All notable changes in the markly project are documented in this file. The format is based on Keep a Changelog, and the project follows Semantic Versioning.
 
-## Unreleased
+## v1.5.0 - 2026-09-22
 
 ### Added
 
