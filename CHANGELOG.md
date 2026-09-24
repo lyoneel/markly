@@ -2,6 +2,12 @@
 
 All notable changes in the markly project are documented in this file. The format is based on Keep a Changelog, and the project follows Semantic Versioning.
 
+## v1.6.0 - 2026-09-24
+
+### Added
+
+- `ValidateHeadings` in the `validate` sub-package: compares a parsed heading list with a caller-supplied expected list and reports mismatches in text, hierarchy, order, and `when_present` children
+
 ## v1.5.0 - 2026-09-22
 
 ### Added
