@@ -2,6 +2,12 @@
 
 All notable changes in the markly project are documented in this file. The format is based on Keep a Changelog, and the project follows Semantic Versioning.
 
+## v1.7.1 - 2026-10-10
+
+### Added
+
+- `text_mode: identifier` in the `validate` heading check (`ValidateHeadings` and the per-item `ExpectedHeading.TextMode`): case folding plus separator folding, where `_`, `-`, `/`, `&`, `.`, and similar punctuation become single spaces and the connectives `and`/`or` drop from both sides, so identifier-styled keys (`supported_platforms`, `public-reception`, `privacy_&_security`) match their human title spellings (`Supported Platforms`, `Public Reception`, `Privacy and Security`). Word order still counts and different or extra words still fail; the existing `strict` and `permissive` behavior is unchanged. Worked trace, expected text `supported_platforms` against heading `## Supported Platforms`: `strict` fails because "_" was never a space; `permissive` fails because the whole word `supported_platforms` equals neither `supported` nor `platforms`; `identifier` folds both sides to `supported platforms` / `Supported Platforms` and matches case-insensitively
+
 ## v1.6.0 - 2026-09-24
 
 ### Added
