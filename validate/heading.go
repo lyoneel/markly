@@ -11,6 +11,7 @@ import (
 const (
 	textStrict      = "strict"
 	textPermissive  = "permissive"
+	textIdentifier  = "identifier"
 	hierarchyStrict = "strict"
 	hierarchyLoose  = "loose"
 	hierarchyIgnore = "ignore"
@@ -23,9 +24,11 @@ const (
 // ExpectedHeading is one heading the caller wants to find. Required nil
 // means the heading is required. TextMode and HierarchyMode, when set,
 // override the modes passed to ValidateHeadings for this item only.
-// WhenPresent lists child headings that apply only when this heading is
-// found. A child sits at a deeper level than the parent and before the
-// next heading at the parent's level or shallower.
+// TextMode identifier folds separators and connectives; see
+// ValidateHeadings for the mode semantics. WhenPresent lists child
+// headings that apply only when this heading is found. A child sits at a
+// deeper level than the parent and before the next heading at the
+// parent's level or shallower.
 type ExpectedHeading struct {
 	Text          string            `json:"text"`
 	Level         int               `json:"level,omitempty"`
@@ -61,11 +64,12 @@ type resolvedHeading struct {
 }
 
 // ValidateHeadings compares headings with an expected list. headings must
-// come from a parse that used WithFenceAwareHeadings. textMode is strict
-// or permissive, hierarchyMode is strict, loose, or ignore, and orderMode
-// is strict or loose. The function does not read frontmatter and does not
-// call Schema.ValidateDocument. It takes no document type, section key, or
-// template name. An empty mode or an unknown mode returns an error.
+// come from a parse that used WithFenceAwareHeadings. textMode is strict,
+// permissive, or identifier, hierarchyMode is strict, loose, or ignore,
+// and orderMode is strict or loose. The function does not read frontmatter
+// and does not call Schema.ValidateDocument. It takes no document type,
+// section key, or template name. An empty mode or an unknown mode returns
+// an error.
 func ValidateHeadings(headings []*markly.MDHeading, textMode, hierarchyMode, orderMode string, expected []ExpectedHeading) (HeadingResult, error) {
 	if err := checkCallModes(textMode, hierarchyMode, orderMode); err != nil {
 		return HeadingResult{}, err
@@ -80,9 +84,9 @@ func ValidateHeadings(headings []*markly.MDHeading, textMode, hierarchyMode, ord
 
 func checkCallModes(textMode, hierarchyMode, orderMode string) error {
 	switch textMode {
-	case textStrict, textPermissive:
+	case textStrict, textPermissive, textIdentifier:
 	default:
-		return fmt.Errorf("text_mode must be strict or permissive")
+		return fmt.Errorf("text_mode must be strict, permissive, or identifier")
 	}
 	switch hierarchyMode {
 	case hierarchyStrict, hierarchyLoose, hierarchyIgnore:
@@ -113,10 +117,10 @@ func resolveOne(item ExpectedHeading, textMode, hierarchyMode string) (resolvedH
 	tm := textMode
 	if item.TextMode != "" {
 		switch item.TextMode {
-		case textStrict, textPermissive:
+		case textStrict, textPermissive, textIdentifier:
 			tm = item.TextMode
 		default:
-			return resolvedHeading{}, fmt.Errorf("expected heading %q: text_mode must be strict or permissive", item.Text)
+			return resolvedHeading{}, fmt.Errorf("expected heading %q: text_mode must be strict, permissive, or identifier", item.Text)
 		}
 	}
 	hm := hierarchyMode
@@ -342,10 +346,43 @@ func hierarchyReason(level int, item resolvedHeading) string {
 }
 
 func textMatch(heading string, item resolvedHeading) bool {
-	if item.textMode == textPermissive {
+	switch item.textMode {
+	case textPermissive:
 		return permissiveMatch(heading, item.text)
+	case textIdentifier:
+		return identifierMatch(heading, item.text)
+	default:
+		return strings.EqualFold(collapseWS(heading), collapseWS(item.text))
 	}
-	return strings.EqualFold(collapseWS(heading), collapseWS(item.text))
+}
+
+// identifierMatch compares heading text with case folding and separator
+// folding: whitespace runs, underlines, hyphens, slashes, ampersands, and
+// periods each become one space, and the connective words "and" and "or"
+// drop from both sides. Snake_case and hyphenated identifiers, ampersand
+// titles, and their human title-case spellings therefore compare equal,
+// while ordinary words still matter.
+func identifierMatch(heading, expected string) bool {
+	return strings.EqualFold(identifierWords(heading), identifierWords(expected))
+}
+
+func identifierWords(s string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		switch r {
+		case '_', '-', '/', '&', '.', ',', ':', ';', '!', '?', '\'', '(', ')':
+			return ' '
+		}
+		return r
+	}, s)
+	var keep []string
+	for _, w := range strings.Fields(cleaned) {
+		switch strings.ToLower(w) {
+		case "and", "or":
+			continue
+		}
+		keep = append(keep, w)
+	}
+	return strings.Join(keep, " ")
 }
 
 func collapseWS(s string) string {

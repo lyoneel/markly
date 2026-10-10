@@ -516,6 +516,57 @@ issues := schema.ValidateMetadata("note.md", meta)
 The style checks apply to YAML frontmatter only; TOML has no block
 style and always satisfies the rule.
 
+## Heading Validation
+
+The `validate` sub-package also checks a parsed heading list against a
+caller-supplied expected list:
+
+```go
+md := markly.NewMDFileFromString(text, markly.WithFenceAwareHeadings())
+content, _ := md.GetContent()
+required := true
+result, err := validate.ValidateHeadings(content.Headings,
+    "identifier", "strict", "strict",
+    []validate.ExpectedHeading{
+        {Text: "supported_platforms", Level: 2, Required: &required},
+        {Text: "Sources", Level: 3},   // nil required reads as required
+    })
+```
+
+Each expected heading carries its level, a `required` flag (nil reads
+as required), an optional per-item `text_mode`/`hierarchy_mode`
+override, and `when_present` children enforced only when the parent is
+found. Modes apply to the whole call and stay overridable per item:
+
+| Mode | Values | Meaning |
+|------|--------|---------|
+| `text_mode` | `strict`, `permissive`, `identifier` | strict: case-folded, whitespace-collapsed equality. permissive: every expected word occurs as a whole word, order and extras free. identifier: case-fold plus separator folding; `_`, `-`, `/`, `&`, `.`, and similar punctuation become single spaces and the connectives `and`/`or` drop from both sides, so `supported_platforms` matches `Supported Platforms` and `privacy_&_security` matches `Privacy and Security`; word order still counts, and different or extra words still fail |
+| `hierarchy_mode` | `strict`, `loose`, `ignore` | heading level equals the expected level, is the same depth or deeper, or is not compared |
+| `order_mode` | `strict`, `loose` | expected headings in order with no extras, or other headings allowed between them |
+
+Worked trace, the expected text `supported_platforms` against the
+heading `## Supported Platforms`:
+
+| text_mode | What it computes | Result |
+|-----------|------------------|--------|
+| `strict` | `"supported_platforms"` vs `"Supported Platforms"` | fail: `_` was never a space |
+| `permissive` | `words("supported_platforms")` = `[supported_platforms]` | fail: the word equals neither `supported` nor `platforms` as a whole word |
+| `identifier` | `identifierWords("supported_platforms")` = `supported platforms`; `identifierWords("Supported Platforms")` = `Supported Platforms`; case-folded equality | match |
+
+The separator fold turns each punctuation run into one space, so
+`public-reception`, `public.reception`, and `public reception` all
+match the heading `Public Reception`, and dropping `and`/`or` from both
+sides makes `privacy_&_security` match `Privacy and Security`. `&`
+folds to a space first, which is why the ampersand pair composes with
+the connective rule. Word order still counts: `Platforms Supported`
+fails. Different words still fail: `Supported Operating Systems` is not
+`supported_platforms`.
+
+Issues carry `Field` (the heading text), `Reason`, and `Severity`
+(`error` fails the check, `warning` does not). The mode strings are
+plain Go constants; an unknown value returns an error from
+`ValidateHeadings` before any comparison runs.
+
 ## License
 
 MIT License - See [LICENSE](LICENSE) file for details.

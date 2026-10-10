@@ -85,6 +85,65 @@ func TestPermissiveTextPunctuationIgnored(t *testing.T) {
 	checkHeadings(t, "# Notes.\n", textPermissive, hierarchyStrict, orderLoose, []ExpectedHeading{h("Notes", 1)}, true, nil)
 }
 
+func TestIdentifierSnakeCaseMatchesTitle(t *testing.T) {
+	checkHeadings(t, "## Supported Platforms\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("supported_platforms", 2)}, true, nil)
+}
+
+func TestIdentifierHyphenatedMatchesTitle(t *testing.T) {
+	checkHeadings(t, "## Public Reception\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("public-reception", 2)}, true, nil)
+}
+
+func TestIdentifierAmpersandMatchesAnd(t *testing.T) {
+	checkHeadings(t, "## Privacy and Security\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("privacy_&_security", 2)}, true, nil)
+}
+
+func TestIdentifierConnectiveDropsFromBothSides(t *testing.T) {
+	checkHeadings(t, "## Land and Sea\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("Land Sea", 2)}, true, nil)
+	checkHeadings(t, "## Land Sea\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("Land and Sea", 2)}, true, nil)
+}
+
+func TestIdentifierDifferentWordsFail(t *testing.T) {
+	checkHeadings(t, "## Supported Operating Systems\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("supported_platforms", 2)}, false, []HeadingIssue{errIssue("supported_platforms")})
+}
+
+func TestIdentifierExtraWordFails(t *testing.T) {
+	checkHeadings(t, "## Supported Platforms Today\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("supported_platforms", 2)}, false, []HeadingIssue{errIssue("supported_platforms")})
+}
+
+func TestIdentifierSlashSeparatorMatches(t *testing.T) {
+	checkHeadings(t, "## Input/Output\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("Input Output", 2)}, true, nil)
+}
+
+func TestIdentifierPeriodSeparatorMatches(t *testing.T) {
+	checkHeadings(t, "## v1.2 Release\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{h("v1 2 Release", 2)}, true, nil)
+}
+
+func TestIdentifierItemModeOverridesCall(t *testing.T) {
+	item := h("supported_platforms", 2)
+	item.TextMode = textIdentifier
+	checkHeadings(t, "## Supported Platforms\n", textStrict, hierarchyStrict, orderLoose, []ExpectedHeading{item}, true, nil)
+}
+
+func TestIdentifierStrictItemBeatsIdentifierCall(t *testing.T) {
+	item := h("Notes", 1)
+	item.TextMode = textStrict
+	checkHeadings(t, "# privacy_security\n", textIdentifier, hierarchyStrict, orderLoose, []ExpectedHeading{item}, false, []HeadingIssue{errIssue("Notes")})
+}
+
+func TestIdentifierUnknownCallModeFails(t *testing.T) {
+	if _, err := ValidateHeadings(nil, "folded", hierarchyStrict, orderLoose, nil); err == nil {
+		t.Fatal("expected error for unknown text mode")
+	}
+}
+
+func TestIdentifierUnknownItemModeFails(t *testing.T) {
+	item := h("Notes", 1)
+	item.TextMode = "folded"
+	if _, err := ValidateHeadings(nil, textStrict, hierarchyStrict, orderLoose, []ExpectedHeading{item}); err == nil {
+		t.Fatal("expected error for unknown item text mode")
+	}
+}
+
 func TestStrictHierarchyLevelMismatchFails(t *testing.T) {
 	checkHeadings(t, "## Notes\n", textStrict, hierarchyStrict, orderLoose, []ExpectedHeading{h("Notes", 1)}, false, []HeadingIssue{errIssue("Notes")})
 }
