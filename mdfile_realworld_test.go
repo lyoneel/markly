@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestRealWorldComplexNestedKaizenStructure tests parsing of complex nested workflow structures.
-func TestRealWorldComplexNestedKaizenStructure(t *testing.T) {
+// TestRealWorldComplexNestedStructure tests parsing of complex nested structures.
+func TestRealWorldComplexNestedStructure(t *testing.T) {
 	content := `---
 name: test-skill
 description: A skill with complex metadata
