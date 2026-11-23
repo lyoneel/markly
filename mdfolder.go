@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gitlab.com/lyoneel/dirly"
@@ -146,8 +147,25 @@ func (mf *MDFolder) buildAdjacencyMap() {
 			}
 		}
 
-		mf.adjacencyMap[name] = deps
+		mf.adjacencyMap[name] = uniqueDeps(deps)
 	}
+}
+
+// uniqueDeps drops repeated dependency entries, keeping the first
+// occurrence, so listing a file twice is one edge, not two.
+func uniqueDeps(deps []string) []string {
+	if len(deps) < 2 {
+		return deps
+	}
+	seen := make(map[string]bool, len(deps))
+	out := deps[:0:0]
+	for _, d := range deps {
+		if !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // GetAll returns all discovered MDFiles (lazy loading enabled).
@@ -259,23 +277,28 @@ func (mf *MDFolder) GetByMetadata(filters map[string]any) []*MDFile {
 	return result
 }
 
-// getLoadOrderInternal is a helper that performs topological sort on a copy of the adjacency map.
+// getLoadOrderInternal performs a topological sort (Kahn's algorithm)
+// over the adjacency map. Edges are counted once per distinct
+// dependency, and a reverse index of dependents keeps the sort linear
+// in files plus edges. Ties are broken by name so the order is stable.
 func (mf *MDFolder) getLoadOrderInternal(adjMapCopy map[string][]string) ([]*MDFile, error) {
 	ordered := make([]*MDFile, 0, len(mf.files))
 	inDegree := make(map[string]int)
+	dependents := make(map[string][]string)
 
 	for file := range mf.files {
+		inDegree[file] = 0
+	}
+	for file, deps := range adjMapCopy {
 		if _, exists := inDegree[file]; !exists {
 			inDegree[file] = 0
 		}
-	}
-
-	for file, deps := range adjMapCopy {
-		for _, dep := range deps {
+		for _, dep := range uniqueDeps(deps) {
 			if _, exists := inDegree[dep]; !exists {
 				inDegree[dep] = 0
 			}
 			inDegree[file]++ // file depends on dep
+			dependents[dep] = append(dependents[dep], file)
 		}
 	}
 
@@ -285,13 +308,7 @@ func (mf *MDFolder) getLoadOrderInternal(adjMapCopy map[string][]string) ([]*MDF
 			queue = append(queue, file)
 		}
 	}
-
-	// Make another copy to avoid modifying during sort
-	tempAdjMap := make(map[string][]string)
-	for k, v := range adjMapCopy {
-		tempAdjMap[k] = make([]string, len(v))
-		copy(tempAdjMap[k], v)
-	}
+	sort.Strings(queue)
 
 	for len(queue) > 0 {
 		current := queue[0]
@@ -301,19 +318,15 @@ func (mf *MDFolder) getLoadOrderInternal(adjMapCopy map[string][]string) ([]*MDF
 			ordered = append(ordered, md)
 		}
 
-		// Reduce in-degree for files that depend on current
-		for file, deps := range tempAdjMap {
-			for i, dep := range deps {
-				if dep == current {
-					inDegree[file]--
-					if inDegree[file] == 0 {
-						queue = append(queue, file)
-					}
-					tempAdjMap[file] = append(deps[:i], deps[i+1:]...)
-					break
-				}
+		var ready []string
+		for _, file := range dependents[current] {
+			inDegree[file]--
+			if inDegree[file] == 0 {
+				ready = append(ready, file)
 			}
 		}
+		sort.Strings(ready)
+		queue = append(queue, ready...)
 	}
 
 	if len(ordered) != len(mf.files) {
