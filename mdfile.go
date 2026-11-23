@@ -191,9 +191,10 @@ func (md *MDFile) folderWriter() func([]byte) error {
 // metadata lines.
 func (md *MDFile) refreshMetadataLineRange(metaLines int) {
 	if md.metadata != nil && md.metadata.modified {
-		newLineCount := metaLines + 3 // delimiters (2) + blank line (1)
-		md.metadata.FromLine = 1
-		md.metadata.ToLine = newLineCount - 2
+		// Same convention as the parsers: line 1 is the opening
+		// delimiter, so the metadata occupies lines 2..metaLines+1.
+		md.metadata.FromLine = 2
+		md.metadata.ToLine = metaLines + 1
 		md.metadata.modified = false
 	}
 }
