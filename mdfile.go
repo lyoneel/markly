@@ -379,10 +379,27 @@ func parseYamlNode(lines []string) (*yaml.Node, error) {
 	return &root, nil
 }
 
+// ErrExcessiveAliasing reports YAML frontmatter whose aliases expand
+// into far more values than the document holds (a "billion laughs"
+// document). The WithRawScalars parse returns it, wrapped, instead of
+// expanding the aliases; detect it with errors.Is.
+var ErrExcessiveAliasing = errors.New("excessive YAML alias expansion")
+
+// Alias expansion budget for the WithRawScalars parse: the converted
+// value may hold at most rawScalarBaseBudget values plus
+// rawScalarAliasFactor values per node of the parsed document. Normal
+// frontmatter, including anchors reused a handful of times, stays far
+// below it; an alias bomb hits it after a few thousand steps.
+const (
+	rawScalarBaseBudget  = 10_000
+	rawScalarAliasFactor = 10
+)
+
 // parseYamlRawScalars parses frontmatter through yaml.Node and converts
 // scalars by tag: !!bool to bool, !!int to int64, !!float to float64,
 // !!null to nil. Everything else (strings, timestamps, dates) keeps its
-// original text so round-trips never rewrite values.
+// original text so round-trips never rewrite values. Alias expansion is
+// bounded; an excessive expansion fails with ErrExcessiveAliasing.
 func parseYamlRawScalars(lines []string) (map[string]any, *yaml.Node, error) {
 	root, err := parseYamlNode(lines)
 	if err != nil {
@@ -392,64 +409,105 @@ func parseYamlRawScalars(lines []string) (map[string]any, *yaml.Node, error) {
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
 		return map[string]any{}, root, nil
 	}
-	value, ok := rawScalarValue(root.Content[0]).(map[string]any)
+	conv := &rawScalarConverter{budget: rawScalarBaseBudget + rawScalarAliasFactor*countYamlNodes(root)}
+	converted, err := conv.value(root.Content[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	value, ok := converted.(map[string]any)
 	if !ok {
 		return map[string]any{}, root, nil
 	}
 	return value, root, nil
 }
 
-// rawScalarValue converts a yaml node tree into plain Go values,
+// countYamlNodes counts the nodes of a parsed tree without following
+// aliases, which is the size of the document as written.
+func countYamlNodes(n *yaml.Node) int {
+	count := 1
+	for _, c := range n.Content {
+		count += countYamlNodes(c)
+	}
+	return count
+}
+
+// rawScalarConverter converts a yaml node tree into plain Go values,
 // preserving the original text of non-bool/int/float/null scalars.
-func rawScalarValue(n *yaml.Node) any {
+// Every produced value spends one unit of budget, so alias expansion
+// cannot grow without limit.
+type rawScalarConverter struct {
+	budget int
+}
+
+func (c *rawScalarConverter) value(n *yaml.Node) (any, error) {
+	if c.budget <= 0 {
+		return nil, ErrExcessiveAliasing
+	}
+	c.budget--
 	switch n.Kind {
 	case yaml.DocumentNode:
 		if len(n.Content) == 0 {
-			return nil
+			return nil, nil
 		}
-		return rawScalarValue(n.Content[0])
+		return c.value(n.Content[0])
 	case yaml.MappingNode:
 		m := map[string]any{}
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			m[n.Content[i].Value] = rawScalarValue(n.Content[i+1])
+			v, err := c.value(n.Content[i+1])
+			if err != nil {
+				return nil, err
+			}
+			m[n.Content[i].Value] = v
 		}
-		return m
+		return m, nil
 	case yaml.SequenceNode:
 		s := make([]any, 0, len(n.Content))
 		for _, item := range n.Content {
-			s = append(s, rawScalarValue(item))
+			v, err := c.value(item)
+			if err != nil {
+				return nil, err
+			}
+			s = append(s, v)
 		}
-		return s
+		return s, nil
 	case yaml.AliasNode:
-		return rawScalarValue(n.Alias)
+		if n.Alias == nil {
+			return nil, nil
+		}
+		return c.value(n.Alias)
 	case yaml.ScalarNode:
-		switch n.Tag {
-		case "!!bool":
-			b, err := strconv.ParseBool(n.Value)
-			if err != nil {
-				return n.Value
-			}
-			return b
-		case "!!int":
-			i, err := strconv.ParseInt(n.Value, 0, 64)
-			if err != nil {
-				return n.Value
-			}
-			return i
-		case "!!float":
-			f, err := strconv.ParseFloat(n.Value, 64)
-			if err != nil {
-				return n.Value
-			}
-			return f
-		case "!!null":
-			return nil
-		default:
-			// Strings, timestamps, and dates keep their original text.
+		return rawScalar(n), nil
+	}
+	return nil, nil
+}
+
+// rawScalar converts one scalar node by tag.
+func rawScalar(n *yaml.Node) any {
+	switch n.Tag {
+	case "!!bool":
+		b, err := strconv.ParseBool(n.Value)
+		if err != nil {
 			return n.Value
 		}
+		return b
+	case "!!int":
+		i, err := strconv.ParseInt(n.Value, 0, 64)
+		if err != nil {
+			return n.Value
+		}
+		return i
+	case "!!float":
+		f, err := strconv.ParseFloat(n.Value, 64)
+		if err != nil {
+			return n.Value
+		}
+		return f
+	case "!!null":
+		return nil
+	default:
+		// Strings, timestamps, and dates keep their original text.
+		return n.Value
 	}
-	return nil
 }
 
 // parseToml dynamically unmarshals TOML into a generic map[string]any.
