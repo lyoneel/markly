@@ -43,7 +43,9 @@ func WithDepKeys(keys ...string) LoaderOption {
 	}
 }
 
-// WithDepSeparator sets separator for parsing comma-delimited dependency strings.
+// WithDepSeparator sets the separator that splits a dependency field
+// written as one string ("a.md, b.md"). Entries are trimmed, and empty
+// entries and repeats are dropped. An empty sep keeps the default ",".
 func WithDepSeparator(sep string) LoaderOption {
 	return func(mf *MDFolder) {
 		if sep != "" {
@@ -150,21 +152,35 @@ func (mf *MDFolder) buildAdjacencyMap() {
 		}
 
 		for _, key := range mf.depKeys {
-			if list := meta.GetStringList(key); len(list) > 0 {
-				deps = append(deps, list...)
-			} else if strVal := meta.GetString(key); strVal != "" {
-				parts := strings.Split(strVal, mf.depSeparator)
-				for _, p := range parts {
-					trimmed := strings.TrimSpace(p)
-					if trimmed != "" {
-						deps = append(deps, trimmed)
-					}
-				}
-			}
+			deps = append(deps, depValues(meta, key, mf.depSeparator)...)
 		}
 
 		mf.adjacencyMap[name] = uniqueDeps(deps)
 	}
+}
+
+// depValues reads the dependencies declared under key. A string value
+// is a separator-delimited list: it is split on sep (the default ","
+// when sep is empty), each entry is trimmed, and empty entries are
+// dropped, so "a.md, b.md" and "a.md" both work. A YAML list keeps its
+// string items as written. Before, GetStringList wrapped any string in a
+// one-item list, so the split never ran and "a.md, b.md" was one
+// dependency named "a.md, b.md".
+func depValues(meta *MDMetadata, key, sep string) []string {
+	str, isString := meta.Get(key).(string)
+	if !isString {
+		return meta.GetStringList(key)
+	}
+	if sep == "" {
+		sep = ","
+	}
+	var deps []string
+	for _, part := range strings.Split(str, sep) {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			deps = append(deps, trimmed)
+		}
+	}
+	return deps
 }
 
 // uniqueDeps drops repeated dependency entries, keeping the first
