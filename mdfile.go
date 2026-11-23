@@ -313,47 +313,30 @@ func (md *MDFile) SetMetadata(meta *MDMetadata) {
 	meta.modified = true
 }
 
-// extractFrontmatter extracts raw frontmatter lines between delimiters from markdown.
-// Supports both YAML (---) and TOML (+++) formats.
-// Returns the frontmatter lines, format ("yaml" or "toml"), and line range (fromLine, toLine).
-func (md *MDFile) extractFrontmatter(scanner *bufio.Scanner) ([]string, string, int, int, error) {
-	var lines []string
-	inSection := false
-	lineNum := 0
-	fromLine := 0
-	toLine := 0
-	format := ""
-
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
-		if !inSection && line == yamlDelimiter {
-			inSection = true
-			format = "yaml"
-			continue // Skip opening delimiter, content starts on next line
+// scannerLines adapts a bufio.Scanner to the line source used by
+// scanFrontmatter.
+func scannerLines(scanner *bufio.Scanner) func() (string, bool) {
+	return func() (string, bool) {
+		if !scanner.Scan() {
+			return "", false
 		}
-
-		if !inSection && line == tomlDelimiter {
-			inSection = true
-			format = "toml"
-			continue // Skip opening delimiter, content starts on next line
-		}
-
-		if inSection && (line == yamlDelimiter || line == tomlDelimiter) {
-			toLine = lineNum - 1 // Frontmatter ends before closing delimiter
-			break
-		}
-
-		if inSection {
-			if fromLine == 0 {
-				fromLine = lineNum // First frontmatter content line
-			}
-			lines = append(lines, line)
-		}
+		return scanner.Text(), true
 	}
+}
 
-	return lines, format, fromLine, toLine, scanner.Err()
+// extractFrontmatter extracts the frontmatter block at the start of the
+// document through the shared scanFrontmatter rules. It returns the
+// block content lines, the format ("yaml" or "toml"), and the line
+// range of the content (fromLine, toLine). No block yields no lines.
+func (md *MDFile) extractFrontmatter(scanner *bufio.Scanner) ([]string, string, int, int, error) {
+	block, _ := scanFrontmatter(scannerLines(scanner))
+	if err := scanner.Err(); err != nil {
+		return nil, "", 0, 0, err
+	}
+	if !block.found || len(block.lines) == 0 {
+		return nil, "", 0, 0, nil
+	}
+	return block.lines, string(block.format), 2, block.closeLine - 1, nil
 }
 
 // parseYaml dynamically unmarshals YAML into a generic map[string]any.
@@ -654,94 +637,23 @@ func (md *MDFile) LoadContent() error {
 
 	scanner := bufio.NewScanner(reader)
 
-	// Check if first line is frontmatter delimiter (YAML --- or TOML +++)
-	hasFrontmatter := false
-	var firstLine string
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" && line != carriageReturn && line != newlineChar {
-			firstLine = line
-			break
-		}
+	// Frontmatter detection shares its rules with processMetadata and
+	// SplitFrontmatter: a block opens on line 1 and closes with the same
+	// delimiter. Without one, every line read so far is body text.
+	block, consumed := scanFrontmatter(scannerLines(scanner))
+	var pre []string
+	if block.found {
+		md.contentFrom = block.closeLine + 1
+	} else {
+		md.contentFrom = 1
+		pre = consumed
 	}
-
-	hasFrontmatter = firstLine == yamlDelimiter || firstLine == tomlDelimiter
-
-	if hasFrontmatter {
-		// First line is already consumed; skip the frontmatter block up to
-		// the closing delimiter. Metadata is parsed by processMetadata.
-		lineNum := 1 // Start counting from first line (the opening delimiter)
-		for scanner.Scan() {
-			lineNum++
-			line := strings.TrimSpace(scanner.Text())
-			if line == yamlDelimiter || line == tomlDelimiter {
-				break // Found closing delimiter (either --- or +++)
-			}
-		}
-
-		// Parse remaining content as markdown (start from next line after closing delimiter)
-		md.contentFrom = lineNum + 1
-		content, err := md.parseMarkdownContent(scanner)
-		if err != nil {
-			return fmt.Errorf("parse content: %w", err)
-		}
-		md.content = content
-		return nil
+	content, err := md.parseMarkdownContent(scanner, pre)
+	if err != nil {
+		return fmt.Errorf("parse content: %w", err)
 	}
-
-	// No frontmatter - parse entire file including first line using scanner
-	md.contentFrom = 1
-	content := &MDContent{
-		Headings: make([]*MDHeading, 0),
-		RawBody:  "",
-	}
-
-	lineNum := 1
-	var currentHeading *MDHeading
-	var rawLines []string
-
-	// Add first line back to processing
-	rawLines = append(rawLines, firstLine)
-	fenced := false
-	if md.isFenceLine(firstLine) {
-		fenced = !fenced
-	}
-	if !fenced {
-		if headingLevel, text := md.isHeading(firstLine); headingLevel > 0 {
-			currentHeading = &MDHeading{
-				Level:    headingLevel,
-				Text:     strings.TrimSpace(text),
-				FromLine: lineNum, // Heading occupies this single line
-				ToLine:   lineNum, // Same as FromLine for ATX headings (single-line)
-			}
-			content.Headings = append(content.Headings, currentHeading)
-		}
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		rawLines = append(rawLines, line)
-
-		if md.isFenceLine(line) {
-			fenced = !fenced
-		} else if !(md.fenceAware && fenced) {
-			if headingLevel, text := md.isHeading(line); headingLevel > 0 {
-				currentHeading = &MDHeading{
-					Level:    headingLevel,
-					Text:     strings.TrimSpace(text),
-					FromLine: lineNum, // Heading occupies this single line
-					ToLine:   lineNum, // Same as FromLine for ATX headings (single-line)
-				}
-				content.Headings = append(content.Headings, currentHeading)
-			}
-		}
-
-		lineNum++
-	}
-
-	content.RawBody = strings.Join(rawLines, "\n")
 	md.content = content
-	return scanner.Err()
+	return nil
 }
 
 // GetContent returns the parsed content. If lazy loading is enabled and content
@@ -770,8 +682,10 @@ func (md *MDFile) GetContentFrom() int {
 	return md.contentFrom
 }
 
-// parseMarkdownContent parses markdown content and extracts headings with their text.
-func (md *MDFile) parseMarkdownContent(scanner *bufio.Scanner) (*MDContent, error) {
+// parseMarkdownContent parses markdown content and extracts headings with
+// their text. The lines in pre are parsed first, then the rest of the
+// scanner.
+func (md *MDFile) parseMarkdownContent(scanner *bufio.Scanner, pre []string) (*MDContent, error) {
 	content := &MDContent{
 		Headings: make([]*MDHeading, 0),
 		RawBody:  "",
@@ -781,8 +695,17 @@ func (md *MDFile) parseMarkdownContent(scanner *bufio.Scanner) (*MDContent, erro
 	var rawLines []string
 	fenced := false
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	next := scannerLines(scanner)
+	for {
+		var line string
+		if len(pre) > 0 {
+			line, pre = pre[0], pre[1:]
+		} else {
+			var ok bool
+			if line, ok = next(); !ok {
+				break
+			}
+		}
 
 		rawLines = append(rawLines, line)
 

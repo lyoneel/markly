@@ -89,11 +89,7 @@ func ParseFrontmatter(text string) (*MDMetadata, string, error) {
 	}
 	lines := strings.Split(raw, "\n")
 
-	firstLine, _, _ := strings.Cut(text, "\n")
-	format := FMTypeYAML
-	if strings.TrimSuffix(firstLine, "\r") == tomlDelimiter {
-		format = FMTypeTOML
-	}
+	format := frontmatterDelimiterFormat(strings.SplitN(text, "\n", 2)[0])
 
 	var data map[string]any
 	var err error
@@ -172,33 +168,91 @@ func checkDuplicateYamlKeys(lines []string) error {
 	return nil
 }
 
+// frontmatterBlock is the result of scanning the start of a document
+// for a frontmatter block.
+type frontmatterBlock struct {
+	found     bool
+	format    FMType   // FMTypeYAML for ---, FMTypeTOML for +++
+	lines     []string // block content without delimiters, \r stripped
+	closeLine int      // 1-based line number of the closing delimiter
+}
+
+// frontmatterDelimiterFormat returns the format a delimiter line opens,
+// or "" when the line is not a delimiter. A trailing \r is ignored.
+func frontmatterDelimiterFormat(line string) FMType {
+	switch strings.TrimSuffix(line, carriageReturn) {
+	case yamlDelimiter:
+		return FMTypeYAML
+	case tomlDelimiter:
+		return FMTypeTOML
+	}
+	return ""
+}
+
+// scanFrontmatter is the one frontmatter detector shared by the file
+// loader (metadata and content) and SplitFrontmatter/ParseFrontmatter.
+// A block exists only when the very first line is a --- or +++
+// delimiter and a later line repeats the same delimiter; --- never
+// closes +++ and the reverse. Leading blank lines, a delimiter further
+// down the body (a thematic break), or an opening delimiter without a
+// matching close all mean the document has no frontmatter.
+//
+// next returns the document lines in order. consumed holds every line
+// read, unmodified, so callers can treat them as body text when no
+// block is found.
+func scanFrontmatter(next func() (string, bool)) (block frontmatterBlock, consumed []string) {
+	first, ok := next()
+	if !ok {
+		return block, nil
+	}
+	consumed = append(consumed, first)
+	format := frontmatterDelimiterFormat(first)
+	if format == "" {
+		return block, consumed
+	}
+	var lines []string
+	lineNum := 1
+	for {
+		line, ok := next()
+		if !ok {
+			// No matching close: not frontmatter.
+			return frontmatterBlock{}, consumed
+		}
+		lineNum++
+		consumed = append(consumed, line)
+		trimmed := strings.TrimSuffix(line, carriageReturn)
+		if trimmed == strings.TrimSuffix(first, carriageReturn) {
+			return frontmatterBlock{found: true, format: format, lines: lines, closeLine: lineNum}, consumed
+		}
+		lines = append(lines, trimmed)
+	}
+}
+
 // SplitFrontmatter splits a markdown document into its raw frontmatter
-// block and the body after it. The document opens with a --- (YAML) or
-// +++ (TOML) delimiter on the first line; the block closes at the next
-// delimiter line. raw carries the frontmatter content without the
-// delimiters; body carries the text after the closing delimiter line.
-// Line endings normalize to \n, matching the scanner-based loader.
-// found reports whether a frontmatter block was detected.
-// Without frontmatter, raw is empty, body is the whole text, and found
-// is false. An opening delimiter without a closing one puts the rest of
-// the document into raw with an empty body, mirroring the extraction
-// the MDFile loader applies to malformed documents.
+// block and the body after it. A block exists only when the first line
+// is a --- (YAML) or +++ (TOML) delimiter and a later line closes it
+// with the same delimiter. raw carries the frontmatter content without
+// the delimiters; body carries the text after the closing delimiter
+// line. Line endings normalize to \n, matching the scanner-based
+// loader. found reports whether a frontmatter block was detected.
+// Without a block (no delimiter on line 1, leading blank lines, or no
+// matching closing delimiter), raw is empty, body is the whole text,
+// and found is false. The MDFile loader applies the same rules.
 func SplitFrontmatter(text string) (raw string, body string, found bool) {
 	lines := strings.Split(text, "\n")
 	for i := range lines {
 		lines[i] = strings.TrimSuffix(lines[i], "\r")
 	}
-	if len(lines) == 0 {
-		return "", text, false
-	}
-	if lines[0] != yamlDelimiter && lines[0] != tomlDelimiter {
-		return "", text, false
-	}
-	for i := 1; i < len(lines); i++ {
-		line := lines[i]
-		if line == yamlDelimiter || line == tomlDelimiter {
-			return strings.Join(lines[1:i], "\n"), strings.Join(lines[i+1:], "\n"), true
+	i := 0
+	block, _ := scanFrontmatter(func() (string, bool) {
+		if i >= len(lines) {
+			return "", false
 		}
+		i++
+		return lines[i-1], true
+	})
+	if !block.found {
+		return "", text, false
 	}
-	return strings.Join(lines[1:], "\n"), "", true
+	return strings.Join(block.lines, "\n"), strings.Join(lines[block.closeLine:], "\n"), true
 }

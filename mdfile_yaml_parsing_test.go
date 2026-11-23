@@ -175,13 +175,12 @@ description: A doc without closing
 
 # Content`,
 			expectError: false,
+			// Without a matching closing delimiter there is no
+			// frontmatter: no metadata, no error.
 			checkResult: func(m *MDMetadata, err error) bool {
-				if err != nil || m == nil {
-					return false
-				}
-				return m.GetString("name") == "test-doc" && m.GetString("description") == "A doc without closing"
+				return err == nil && m == nil
 			},
-			checkType: func(t FMType) bool { return t == "yaml" },
+			checkType: func(t FMType) bool { return t == "" },
 		},
 		{
 			name:        "Multiple --- in file (code blocks)",
@@ -528,13 +527,12 @@ description = "A doc without closing"
 
 # Content`,
 			expectError: false,
+			// Without a matching closing delimiter there is no
+			// frontmatter: no metadata, no error.
 			checkResult: func(m *MDMetadata, err error) bool {
-				if err != nil || m == nil {
-					return false
-				}
-				return m.GetString("name") == "test-doc" && m.GetString("description") == "A doc without closing"
+				return err == nil && m == nil
 			},
-			checkType: func(t FMType) bool { return t == "toml" },
+			checkType: func(t FMType) bool { return t == "" },
 		},
 		{
 			name:        "Multiple +++ in file (code blocks)",

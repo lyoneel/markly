@@ -72,12 +72,17 @@ Even more nested content.
 		t.Errorf("expected 'Heading 1', got '%s'", contentData.Headings[0].Text)
 	}
 
-	// Verify line ranges for headings
-	// Heading 1: "# Heading 1" is on line 1 (relative to content start)
-	if len(contentData.Headings) > 0 {
-		h := contentData.Headings[0]
-		if h.FromLine != 1 || h.ToLine != 1 {
-			t.Errorf("expected first heading FromLine=1, ToLine=1, got FromLine=%d, ToLine=%d", h.FromLine, h.ToLine)
+	// Verify line ranges for headings. They follow the same rules as in
+	// documents with frontmatter: FromLine is the heading line relative
+	// to content start, and ToLine is the last line of its section.
+	wantRanges := [][2]int{{1, 4}, {5, 8}, {9, 11}}
+	for i, want := range wantRanges {
+		if i >= len(contentData.Headings) {
+			break
+		}
+		h := contentData.Headings[i]
+		if h.FromLine != want[0] || h.ToLine != want[1] {
+			t.Errorf("heading %d: got FromLine=%d, ToLine=%d, want %d-%d", i, h.FromLine, h.ToLine, want[0], want[1])
 		}
 	}
 
