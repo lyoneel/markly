@@ -643,28 +643,41 @@ func WithStrictDuplicates() FileOption {
 // openReader returns the reader to parse from: the in-memory source
 // when set, otherwise the file at md.path. The returned closer is nil
 // for in-memory sources.
+//
+// A failed open is a *fs.PathError for md.path that keeps the cause,
+// so os.IsNotExist, os.IsPermission and errors.Is with os.ErrNotExist
+// or os.ErrPermission all work. Its text starts with "metadata not
+// found" for a missing file and "open failed" otherwise. Symlink policy
+// refusals of MDFolder files wrap ErrPathEscapesRoot or
+// ErrSymlinkNotAllowed.
 func (md *MDFile) openReader() (io.ReadCloser, error) {
 	if md.source != nil {
 		return io.NopCloser(bytes.NewReader(md.source)), nil
 	}
+	var file io.ReadCloser
+	var err error
 	if md.open != nil {
-		file, err := md.open()
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("metadata not found: %s", md.path)
-			}
-			return nil, fmt.Errorf("open failed: %s: %w", md.path, err)
-		}
-		return file, nil
+		file, err = md.open()
+	} else {
+		file, err = os.Open(md.path)
 	}
-	file, err := os.Open(md.path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("metadata not found: %s", md.path)
-		}
-		return nil, fmt.Errorf("open failed: %s", md.path)
+		return nil, md.openError(err)
 	}
 	return file, nil
+}
+
+// openError converts an open failure into the documented error shape.
+func (md *MDFile) openError(err error) error {
+	var pe *fs.PathError
+	if !errors.As(err, &pe) || errors.Is(err, ErrPathEscapesRoot) || errors.Is(err, ErrSymlinkNotAllowed) {
+		return fmt.Errorf("open failed: %s: %w", md.path, err)
+	}
+	op := "open failed"
+	if errors.Is(err, fs.ErrNotExist) {
+		op = "metadata not found"
+	}
+	return &fs.PathError{Op: op, Path: md.path, Err: pe.Err}
 }
 
 func (md *MDFile) processMetadata() error {

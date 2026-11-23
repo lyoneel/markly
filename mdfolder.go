@@ -1,8 +1,10 @@
 package markly
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -75,7 +77,14 @@ func WithSymlinkPolicy(policy SymlinkPolicy) LoaderOption {
 	}
 }
 
+// ErrNotADirectory reports a NewMDFolder path that exists but is not a
+// directory.
+var ErrNotADirectory = errors.New("not a directory")
+
 // NewMDFolder creates a new MDFolder for basic file discovery with default dependency config.
+// The path must be an existing directory (or a symlink to one); a
+// missing path returns the os.Stat error, so os.IsNotExist works, and a
+// file returns an error wrapping ErrNotADirectory.
 // Files are read through dirly under the folder's symlink policy
 // (FollowWithinRoot unless WithSymlinkPolicy says otherwise).
 func NewMDFolder(dirPath string, opts ...LoaderOption) (*MDFolder, error) {
@@ -95,6 +104,17 @@ func NewMDFolder(dirPath string, opts ...LoaderOption) (*MDFolder, error) {
 	}
 	if !validSymlinkPolicy(mf.symlinkPolicy) {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSymlinkPolicy, mf.symlinkPolicy)
+	}
+
+	// The folder must exist and be a directory (a symlink to one is
+	// fine). The error is the *fs.PathError from os.Stat, so
+	// os.IsNotExist and errors.Is(err, os.ErrNotExist) work.
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, &fs.PathError{Op: "open folder", Path: dirPath, Err: ErrNotADirectory}
 	}
 
 	// Initialize dirly.Directory with markdown extension filter (case-insensitive).
@@ -184,19 +204,22 @@ func pathHasDotDir(relPath string) bool {
 }
 
 // Errors returns the per-file metadata errors collected during the
-// last discovery pass, keyed by relative path.
+// last discovery pass, keyed by relative path. A failure of discovery
+// itself (for example the folder became unreadable) is reported under
+// the empty key "".
 func (mf *MDFolder) Errors() map[string]error {
 	return mf.errors
 }
 
 // GetAllByGlob returns all discovered MDFiles (lazy loading enabled).
 func (mf *MDFolder) GetAllByGlob(glob string) map[string]*MDFile {
+	result := make(map[string]*MDFile)
 	relPaths, err := mf.dir.GetAllByGlobRel(glob)
 	if err != nil {
-		return nil
+		mf.errors[""] = fmt.Errorf("discover files: %w", err)
+		return result
 	}
 
-	result := make(map[string]*MDFile)
 	for _, path := range relPaths {
 		if mf.skipDotDirs && pathHasDotDir(path) {
 			continue
@@ -208,7 +231,10 @@ func (mf *MDFolder) GetAllByGlob(glob string) map[string]*MDFile {
 		md.writePath = fullPath
 
 		// Process metadata immediately to ensure it's available
-		if err = md.processMetadata(); err != nil && !os.IsNotExist(err) {
+		if err = md.processMetadata(); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // removed since discovery
+			}
 			mf.errors[path] = err
 			continue // Skip files with metadata errors
 		}
