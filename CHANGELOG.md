@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ### Security
 
-- **Breaking:** Files read from disk are limited to `DefaultMaxFileSize` (64 MiB) by default. A larger file, or one that grows past the limit while it is read, fails `GetMetadata` and `LoadContent` with an error wrapping `ErrFileTooLarge` instead of being read into memory whole, and an `MDFolder` skips it and reports it in `Errors()`. markly reads at most one byte past the limit. The `validate` package applies the same limit to the documents, schemas, and vocabulary files it reads. To upgrade, nothing is needed for documents under 64 MiB; to read larger ones, pass `WithMaxFileSize` or `WithFolderMaxFileSize` with a higher limit, or 0 to disable the check.
+- Files read from disk are limited to `DefaultMaxFileSize` (64 MiB) by default. A larger file, or one that grows past the limit while it is read, fails `GetMetadata` and `LoadContent` with an error wrapping `ErrFileTooLarge` instead of being read into memory whole, and an `MDFolder` skips it and reports it in `Errors()`. markly reads at most one byte past the limit. The `validate` package applies the same limit to the documents, schemas, and vocabulary files it reads. To read larger documents, pass `WithMaxFileSize` or `WithFolderMaxFileSize` with a higher limit, or 0 to disable the check.
 
 ## [1.8.0] - 2026-11-23
 
