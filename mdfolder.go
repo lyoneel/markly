@@ -188,7 +188,8 @@ func uniqueDeps(deps []string) []string {
 	return out
 }
 
-// GetAll returns all discovered MDFiles (lazy loading enabled).
+// GetAll returns all discovered MDFiles (lazy loading enabled). Like
+// GetAllByGlob, it replaces the state of the previous load.
 func (mf *MDFolder) GetAll() map[string]*MDFile {
 	return mf.GetAllByGlob("*")
 }
@@ -211,8 +212,18 @@ func (mf *MDFolder) Errors() map[string]error {
 	return mf.errors
 }
 
-// GetAllByGlob returns all discovered MDFiles (lazy loading enabled).
+// GetAllByGlob returns all discovered MDFiles matching glob (lazy
+// loading enabled). Each call is a fresh load: the files, dependency
+// graph and Errors() of the folder are replaced by the result of this
+// pass, so Iterate, GetByMetadata, GetLoadOrder and the dependency
+// helpers see exactly the files it returned.
 func (mf *MDFolder) GetAllByGlob(glob string) map[string]*MDFile {
+	// Each load replaces the folder state: files removed since the
+	// previous load disappear, and errors that were fixed are cleared.
+	mf.files = make(map[string]*MDFile)
+	mf.errors = make(map[string]error)
+	mf.adjacencyMap = make(map[string][]string)
+
 	result := make(map[string]*MDFile)
 	relPaths, err := mf.dir.GetAllByGlobRel(glob)
 	if err != nil {
