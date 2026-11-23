@@ -1,22 +1,49 @@
+# golang:1.26.11, pinned to the digest of its multi-arch image index
+# (linux/amd64, linux/arm64 and the other platforms Docker publishes),
+# so every runner pulls the same toolchain. Update the tag and digest
+# together.
+default:
+  image: golang:1.26.11@sha256:4165ee6bf3b7811fd7b40373290405c83d0167dcb87ee5f29c427cdcef45ff8f
+
+variables:
+  STATICCHECK_VERSION: "2026.2.2"
+  GOVULNCHECK_VERSION: "v1.10.0"
+
 stages:
   - test
   - build
 
-test:
-  stage: test
-  image: golang:1.26.11
-  script:
-    - go vet ./...
-    - go test -cover ./...
+.on_main_and_mrs:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
+lint:
+  stage: test
+  extends: .on_main_and_mrs
+  script:
+    - go mod verify
+    - |
+      unformatted=$(gofmt -l .)
+      if [ -n "$unformatted" ]; then
+        echo "gofmt needed on:"
+        echo "$unformatted"
+        exit 1
+      fi
+    - go vet ./...
+    - go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
+    - go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+    - staticcheck ./...
+    - govulncheck ./...
+
+test:
+  stage: test
+  extends: .on_main_and_mrs
+  script:
+    - go test -race -cover ./...
+
 build:
   stage: build
-  image: golang:1.26.11
+  extends: .on_main_and_mrs
   script:
     - go build ./...
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
