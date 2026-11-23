@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `WithMaxFileSize(limit)` for an `MDFile` and `WithFolderMaxFileSize(limit)` for every file an `MDFolder` loads set the largest document, in bytes, read from disk; a limit of 0 or less disables the check. The default is the new `DefaultMaxFileSize` (64 MiB, four times `MaxLineLength`), and an oversized file fails with an error wrapping the new `ErrFileTooLarge`.
+
+### Changed
+
+- markly now uses `go.yaml.in/yaml/v3` v3.0.6, the maintained drop-in successor of the archived `gopkg.in/yaml.v3`, which is no longer a dependency, and `github.com/pelletier/go-toml/v2` v2.4.3 (from v2.2.4).
+- `GetLoadOrder`, `DetectCycles`, and `GetAllWithDependencies` run in time linear in files plus dependencies, after one sort of the names, and walk iteratively, so chains of any depth resolve without recursion. `GetAllWithDependencies` on a 10,000-file chain takes about 3 ms and 3 MB instead of 4.6 s and 6 GB. The load order, the files returned, and the errors are unchanged.
+- `validate.LoadSchema` wraps the error from reading the schema or a vocabulary file instead of flattening it to text, so `errors.Is` works on it (for example with `os.ErrNotExist`).
+- CI runs `go mod verify`, a `gofmt` check, `go vet`, `staticcheck` 2026.2.2, `govulncheck` v1.10.0, `go test -race -cover`, and `go build` in the `golang:1.26.11` image pinned by digest.
+
+### Fixed
+
+- `DetectCycles` returns the same cycles in the same order on every run; it walked the files in map order before.
+
+### Security
+
+- **Breaking:** Files read from disk are limited to `DefaultMaxFileSize` (64 MiB) by default. A larger file, or one that grows past the limit while it is read, fails `GetMetadata` and `LoadContent` with an error wrapping `ErrFileTooLarge` instead of being read into memory whole, and an `MDFolder` skips it and reports it in `Errors()`. markly reads at most one byte past the limit. The `validate` package applies the same limit to the documents, schemas, and vocabulary files it reads. To upgrade, nothing is needed for documents under 64 MiB; to read larger ones, pass `WithMaxFileSize` or `WithFolderMaxFileSize` with a higher limit, or 0 to disable the check.
+
 ## [1.8.0] - 2026-11-23
 
 ### Added
