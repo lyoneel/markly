@@ -52,7 +52,7 @@ active = true
 # Document Title
 ```
 
-**Note:** The package automatically detects the format based on the opening delimiter. Mixed delimiters in code blocks are handled correctly - only the first frontmatter section is parsed as metadata.
+**Note:** The package detects the format from the opening delimiter. A frontmatter block must start on line 1 and close with the same delimiter it opened with. A document whose first line is anything else (including a blank line), whose block is never closed, or whose block mixes `---` and `+++` has no frontmatter, and the whole text is body. Only that first block is metadata; a later `---` (for example a horizontal rule) is body text.
 
 ## Core Types
 
@@ -169,8 +169,17 @@ All operations return errors for proper error handling:
 | `LoadContent()` | File not found (`os.IsNotExist`), parse errors, a line longer than `markly.MaxLineLength` (wraps `bufio.ErrTooLong`) |
 | `GetContent()` | The `LoadContent()` errors; with lazy loading, an error until `LoadContent()` has run |
 | `GetMetadata()` | File not found (`os.IsNotExist`) or unreadable, parse errors; `nil, nil` when the file has no frontmatter |
+| `Save()` / `SaveAtomic()` / `Render()` | `markly.ErrMetadataSerialization` when the metadata cannot be serialized (the file is left untouched), write errors |
+| Single-line edits (`AppendLine`, `InsertLine`, `SetSectionHeading`, `SetSectionBullet`, `InsertLineUnderHeading`, `SetFirstHeading`, `RewriteCheckboxTitle`) | `markly.ErrMultilineText` when the text contains `\n` or `\r` |
+| `SetCheckboxMarker()` | `markly.ErrInvalidCheckboxMarker` for a marker other than `' '`, `'x'`, `'X'`, `'~'` |
+| `WithRawScalars()` parsing | `markly.ErrExcessiveAliasing` when YAML aliases expand past the budget |
+| `NewMDFolder()` | Folder not found (`os.IsNotExist`), `markly.ErrNotADirectory`, `markly.ErrInvalidSymlinkPolicy` |
 | `GetLoadOrder()` | Circular dependency detected |
 | `GetAllWithDependencies()` | Circular dependency, file not found |
+| `validate.LoadSchema()` | `validate.ErrSchema`; `validate.ErrVocabularyEscape` for a `from` reference outside the schema directory |
+
+`Serialize()` returns `""` when the metadata cannot be serialized; use
+`Render()` to get the error.
 
 **Error Patterns:**
 
@@ -220,8 +229,19 @@ if err := md.SaveAtomic(); err != nil {          // temp file + rename
 ```
 
 `Save()` keeps the classic direct write. `SaveAtomic()` writes a
-uniquely named temp file in the target directory and renames it over
-the target, so a crash mid-write leaves the previous file intact.
+uniquely named temp file in the target directory, syncs it, renames it
+over the target, and syncs the directory, so a crash mid-write leaves
+the previous file intact. It keeps the existing file's mode (new files
+get `markly.DefaultFilePerm`, 0644) and, where the platform allows,
+its owner, and it writes through a symlink to the link's target
+instead of replacing the link. Files loaded from an `MDFolder` save
+through dirly's atomic writer under the folder's symlink policy; that
+write fails with `dirly.ErrOwnership` if the file's owner cannot be
+kept, leaving the file untouched.
+
+Single-line edits reject text containing a line break with
+`markly.ErrMultilineText`, so a title or bullet cannot inject extra
+lines or a second frontmatter block.
 
 ### Loading Options
 
@@ -238,6 +258,9 @@ md := markly.NewMDFileFromString(content,
 scalars to their natural types but keeps everything else (dates,
 timestamps, plain strings) as the exact original text, so round-trips
 never rewrite values.
+Alias expansion is budgeted (10,000 values plus ten per YAML node in the
+document), so an alias bomb fails fast with `markly.ErrExcessiveAliasing`
+instead of exhausting memory.
 
 ### Metadata Structure Inspection
 
@@ -378,7 +401,17 @@ for path, err := range folder.Errors() {
 ```
 
 Metadata parse errors no longer log; they are collected and exposed
-through `Errors()`, keyed by relative path.
+through `Errors()`, keyed by relative path. A failure of discovery
+itself is stored under the empty key `""`. Every `GetAll` or
+`GetAllByGlob` call replaces the files, the dependency graph, and
+`Errors()` with the result of that load, and a file deleted between
+discovery and parsing is skipped. `NewMDFolder` fails when the folder
+does not exist (`os.IsNotExist`) or is not a directory
+(`markly.ErrNotADirectory`).
+
+Dependencies listed more than once count once, and `GetLoadOrder`
+returns files that have no ordering constraint between them in
+lexical order, so the result is the same on every run.
 
 ### Symlinks
 
@@ -412,8 +445,8 @@ itself a symlink (for example `~/notes -> ~/Sync/notes`) needs no
 change: its real location becomes the boundary. An unknown policy value
 makes `NewMDFolder` fail with `markly.ErrInvalidSymlinkPolicy`. Files
 opened directly with `NewMDFile` or `NewMDFileWithContent` are not
-affected by the policy, and `Save`/`SaveAtomic` write to the file path
-as before.
+affected by the policy. Folder files are also saved through dirly
+under the policy (see In-Memory Construction).
 
 ## Testing
 
@@ -536,7 +569,12 @@ issues, err = schema.ValidateDir("docs/")            // file, directory, or glob
 Each issue carries `File`, `Field`, and `Reason`. Generic shapes cover
 string, single, list, objects, object, case, date, number, and
 boolean. `from` references resolve at load time to the controlled
-vocabulary files next to the schema. Domain-specific shapes register
+vocabulary files next to the schema: a bare name is looked up in the
+schema directory, then in the parent directory's `assets/` and
+`references/` folders and the parent itself; a name with a slash
+resolves only below the schema directory. A reference that is absolute,
+climbs out with `..`, or reaches outside through a symlink fails with
+`validate.ErrVocabularyEscape`. Domain-specific shapes register
 through `ShapeFunc` and receive the schema's `Ctx` value, so domain
 semantics stay caller-side:
 

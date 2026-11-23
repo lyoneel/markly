@@ -266,7 +266,7 @@ for path, md := range allFiles {
 | `GetLoadOrder() ([]*MDFile, error)` | Topological sort of dependencies (Kahn's algorithm) |
 | `DetectCycles() []string` | Return cycle paths as formatted strings (e.g., "A -> B -> A") |
 | `GetAllWithDependencies(filename string, visited map[string]bool) ([]*MDFile, error)` | Transitive dependency resolution |
-| `Errors() map[string]error` | Per-file errors from discovery (parse failures, symlink policy refusals), keyed by relative path |
+| `Errors() map[string]error` | Per-file errors from the last load (parse failures, symlink policy refusals), keyed by relative path; a discovery failure is under the empty key `""` |
 | `SymlinkPolicy() SymlinkPolicy` | The symlink policy folder files are read with |
 
 **LoaderOptions:**
