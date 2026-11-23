@@ -4,7 +4,7 @@ stages:
 
 test:
   stage: test
-  image: golang:1.26
+  image: golang:1.26.11
   script:
     - go vet ./...
     - go test -cover ./...
@@ -14,7 +14,7 @@ test:
 
 build:
   stage: build
-  image: golang:1.26
+  image: golang:1.26.11
   script:
     - go build ./...
   rules:
