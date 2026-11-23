@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-23
+
 ### Added
 
 - `WithMaxFileSize(limit)` for an `MDFile` and `WithFolderMaxFileSize(limit)` for every file an `MDFolder` loads set the largest document, in bytes, read from disk; a limit of 0 or less disables the check. The default is the new `DefaultMaxFileSize` (64 MiB, four times `MaxLineLength`), and an oversized file fails with an error wrapping the new `ErrFileTooLarge`.
@@ -136,7 +138,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - Batch read and write operations.
 - Pluggable YAML frontmatter serializer.
 
-[Unreleased]: https://gitlab.com/lyoneel/markly/-/compare/v1.8.0...HEAD
+[Unreleased]: https://gitlab.com/lyoneel/markly/-/compare/v1.8.1...HEAD
+[1.8.1]: https://gitlab.com/lyoneel/markly/-/compare/v1.8.0...v1.8.1
 [1.8.0]: https://gitlab.com/lyoneel/markly/-/compare/v1.7.1...v1.8.0
 [1.7.1]: https://gitlab.com/lyoneel/markly/-/compare/v1.6.0...v1.7.1
 [1.6.0]: https://gitlab.com/lyoneel/markly/-/compare/v1.5.0...v1.6.0
