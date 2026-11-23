@@ -303,6 +303,9 @@ type MDFile struct {
 
 	write     func([]byte) error // policy-checked atomic writer for MDFolder files
 	writePath string             // path write belongs to; SetPath elsewhere disables it
+
+	maxSize    int64 // read limit set by WithMaxFileSize; <= 0 disables
+	maxSizeSet bool  // false uses DefaultMaxFileSize
 }
 
 // FileOption configures MDFile loading behavior.
@@ -650,7 +653,8 @@ func WithStrictDuplicates() FileOption {
 // or os.ErrPermission all work. Its text starts with "metadata not
 // found" for a missing file and "open failed" otherwise. Symlink policy
 // refusals of MDFolder files wrap ErrPathEscapesRoot or
-// ErrSymlinkNotAllowed.
+// ErrSymlinkNotAllowed. A file over the size limit fails with an error
+// wrapping ErrFileTooLarge, here or while it is read.
 func (md *MDFile) openReader() (io.ReadCloser, error) {
 	if md.source != nil {
 		return io.NopCloser(bytes.NewReader(md.source)), nil
@@ -665,7 +669,12 @@ func (md *MDFile) openReader() (io.ReadCloser, error) {
 	if err != nil {
 		return nil, md.openError(err)
 	}
-	return file, nil
+	limited, err := md.limitFile(file)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return limited, nil
 }
 
 // openError converts an open failure into the documented error shape.

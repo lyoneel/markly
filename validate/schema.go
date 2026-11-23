@@ -9,7 +9,6 @@ package validate
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -67,9 +66,9 @@ var vocabPattern = regexp.MustCompile("(?s)```[^\\n]*\\n(.*?)```")
 // directory, then the parent directory itself plus its assets and
 // references folders); an unresolvable reference is a schema error.
 func LoadSchema(path string) (*Schema, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readFileLimited(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSchema, err)
+		return nil, fmt.Errorf("%w: %w", ErrSchema, err)
 	}
 	name := filepath.Base(path)
 
@@ -257,7 +256,7 @@ func (v *vocabResolver) read(ref string) (map[string]bool, error) {
 			if isRootEscape(err) {
 				return nil, fmt.Errorf("%w: %w: schema 'from' target '%s'", ErrSchema, ErrVocabularyEscape, ref)
 			}
-			return nil, fmt.Errorf("%w: %v", ErrSchema, err)
+			return nil, fmt.Errorf("%w: %w", ErrSchema, err)
 		}
 		return parseVocabulary(raw), nil
 	}
@@ -280,7 +279,7 @@ func readRootFile(r *os.Root, name string) ([]byte, error) {
 	if info.IsDir() {
 		return nil, errIsDir
 	}
-	return io.ReadAll(f)
+	return readLimited(f, info, name)
 }
 
 // isRootEscape reports whether err is os.Root refusing a path that

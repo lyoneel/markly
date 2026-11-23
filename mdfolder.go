@@ -27,10 +27,24 @@ type MDFolder struct {
 	skipDotDirs bool // skip files inside dot-directories
 
 	symlinkPolicy SymlinkPolicy // how symlinks below the root are treated
+
+	fileOpts []FileOption // applied to every file the folder loads
 }
 
 // LoaderOption configures MDFolder behavior.
 type LoaderOption func(*MDFolder)
+
+// WithFolderMaxFileSize sets the largest file, in bytes, the folder
+// reads; it is WithMaxFileSize applied to every file the folder loads.
+// A larger file is skipped and reported in Errors() with an error
+// wrapping ErrFileTooLarge, and a lazy LoadContent of a file that grew
+// past the limit fails the same way. The default is DefaultMaxFileSize;
+// a limit of 0 or less disables the check.
+func WithFolderMaxFileSize(limit int64) LoaderOption {
+	return func(mf *MDFolder) {
+		mf.fileOpts = append(mf.fileOpts, WithMaxFileSize(limit))
+	}
+}
 
 // WithDepKeys sets custom field names to look for dependencies in metadata.
 func WithDepKeys(keys ...string) LoaderOption {
@@ -248,7 +262,7 @@ func (mf *MDFolder) GetAllByGlob(glob string) map[string]*MDFile {
 			continue
 		}
 		fullPath := filepath.Join(mf.dir.BasePath(), path)
-		md := NewMDFile(fullPath)
+		md := NewMDFile(fullPath, mf.fileOpts...)
 		md.open = mf.fileOpener(path)
 		md.write = mf.fileWriter(path)
 		md.writePath = fullPath

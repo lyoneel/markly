@@ -262,7 +262,7 @@ func (s *Schema) ValidateDir(target string) ([]Issue, error) {
 // the document name with the parse error.
 func documentFrontmatter(path string) (map[string]any, error) {
 	name := filepath.Base(path)
-	raw, err := os.ReadFile(path)
+	raw, err := readFileLimited(path)
 	if err != nil {
 		return nil, err
 	}
