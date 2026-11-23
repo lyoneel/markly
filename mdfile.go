@@ -399,6 +399,31 @@ func (md *MDFile) SetMetadata(meta *MDMetadata) {
 	meta.modified = true
 }
 
+// MaxLineLength is the longest line, in bytes, a document may contain.
+// Lines up to this size (inline data: images, long tables, minified
+// HTML) load normally; the scanner buffer grows only as far as the
+// longest line needs. A longer line fails the load with an error
+// wrapping bufio.ErrTooLong.
+const MaxLineLength = 16 << 20
+
+// newDocScanner returns a line scanner for a document that accepts
+// lines up to MaxLineLength bytes.
+func newDocScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxLineLength+1)
+	return scanner
+}
+
+// scanErr returns the scanner error, naming the limit when a line is
+// too long.
+func scanErr(scanner *bufio.Scanner) error {
+	err := scanner.Err()
+	if errors.Is(err, bufio.ErrTooLong) {
+		return fmt.Errorf("line longer than %d bytes: %w", MaxLineLength, err)
+	}
+	return err
+}
+
 // scannerLines adapts a bufio.Scanner to the line source used by
 // scanFrontmatter.
 func scannerLines(scanner *bufio.Scanner) func() (string, bool) {
@@ -416,7 +441,7 @@ func scannerLines(scanner *bufio.Scanner) func() (string, bool) {
 // range of the content (fromLine, toLine). No block yields no lines.
 func (md *MDFile) extractFrontmatter(scanner *bufio.Scanner) ([]string, string, int, int, error) {
 	block, _ := scanFrontmatter(scannerLines(scanner))
-	if err := scanner.Err(); err != nil {
+	if err := scanErr(scanner); err != nil {
 		return nil, "", 0, 0, err
 	}
 	if !block.found || len(block.lines) == 0 {
@@ -652,7 +677,7 @@ func (md *MDFile) processMetadata() error {
 	}
 	defer reader.Close()
 
-	scanner := bufio.NewScanner(reader)
+	scanner := newDocScanner(reader)
 	frontmatterLines, format, fromLine, toLine, err := md.extractFrontmatter(scanner)
 	if err != nil {
 		return err
@@ -721,7 +746,7 @@ func (md *MDFile) LoadContent() error {
 	}
 	defer reader.Close()
 
-	scanner := bufio.NewScanner(reader)
+	scanner := newDocScanner(reader)
 
 	// Frontmatter detection shares its rules with processMetadata and
 	// SplitFrontmatter: a block opens on line 1 and closes with the same
@@ -826,7 +851,7 @@ func (md *MDFile) parseMarkdownContent(scanner *bufio.Scanner, pre []string) (*M
 	}
 
 	content.RawBody = strings.Join(rawLines, "\n")
-	return content, scanner.Err()
+	return content, scanErr(scanner)
 }
 
 // isFenceLine reports whether the line opens or closes a fenced code
