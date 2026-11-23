@@ -9,6 +9,8 @@ package validate
 import (
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +23,12 @@ import (
 // ErrSchema reports a malformed schema file. LoadSchema wraps every
 // load failure with it; use errors.Is to detect.
 var ErrSchema = errors.New("invalid schema")
+
+// ErrVocabularyEscape reports a From reference that points outside the
+// directory it must resolve in: an absolute path, a path with "..", or
+// a symlink whose target lies outside that directory. LoadSchema
+// returns it wrapped together with ErrSchema.
+var ErrVocabularyEscape = errors.New("vocabulary reference escapes the schema directory")
 
 // Field declares one document field rule from the schema fields map.
 type Field struct {
@@ -122,6 +130,8 @@ func LoadSchema(path string) (*Schema, error) {
 		schema.Fields = append(schema.Fields, field)
 	}
 
+	resolver := newVocabResolver(filepath.Dir(path))
+	defer resolver.close()
 	for _, field := range schema.Fields {
 		if field.From == "" {
 			continue
@@ -129,7 +139,7 @@ func LoadSchema(path string) (*Schema, error) {
 		if _, seen := schema.Vocab[field.From]; seen {
 			continue
 		}
-		vocab, err := readVocabulary(filepath.Dir(path), field.From)
+		vocab, err := resolver.read(field.From)
 		if err != nil {
 			return nil, err
 		}
@@ -170,42 +180,128 @@ func schemaFieldOrder(text string) []string {
 	return nil
 }
 
-// readVocabulary loads one From reference: the non-empty non-# lines
-// inside fenced code blocks of the referenced markdown file. The
-// search mirrors the fm_validate constant walk: the schema directory
-// first, then the parent directory and its assets and references
-// folders. References containing a slash resolve only inside the
-// schema directory.
-func readVocabulary(schemaDir, ref string) (map[string]bool, error) {
-	root := filepath.Dir(schemaDir)
-	var candidates []string
-	if strings.Contains(ref, "/") {
-		candidates = append(candidates, filepath.Join(schemaDir, ref+".md"))
-	} else {
-		for _, base := range []string{schemaDir, filepath.Join(root, "assets"), filepath.Join(root, "references"), root} {
-			candidates = append(candidates, filepath.Join(base, ref+".md"))
-		}
+// vocabResolver resolves From references for one schema load. Each
+// search directory is opened once as an os.Root, so every vocabulary
+// file is read inside its directory: "..", absolute paths, and
+// symlinks that leave the directory are refused, also against a
+// symlink swapped in after the check. A schema directory that is
+// itself a symlink works, because the root is opened through it.
+type vocabResolver struct {
+	schemaDir string
+	roots     map[string]*os.Root
+	missing   map[string]bool
+}
+
+func newVocabResolver(schemaDir string) *vocabResolver {
+	return &vocabResolver{schemaDir: schemaDir, roots: map[string]*os.Root{}, missing: map[string]bool{}}
+}
+
+func (v *vocabResolver) close() {
+	for _, r := range v.roots {
+		_ = r.Close()
 	}
-	for _, candidate := range candidates {
-		if !fileExists(candidate) {
+}
+
+// root returns the opened root for dir, or nil when dir does not exist.
+func (v *vocabResolver) root(dir string) (*os.Root, error) {
+	if r, ok := v.roots[dir]; ok {
+		return r, nil
+	}
+	if v.missing[dir] {
+		return nil, nil
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		v.missing[dir] = true
+		return nil, nil
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrSchema, err)
+	}
+	v.roots[dir] = r
+	return r, nil
+}
+
+// read loads one From reference: the non-empty non-# lines inside
+// fenced code blocks of the referenced markdown file. The search
+// mirrors the fm_validate constant walk: the schema directory first,
+// then the parent directory's assets and references folders and the
+// parent directory itself. References containing a slash resolve only
+// inside the schema directory. Every candidate is opened inside its
+// own search directory, so a reference can never read a file outside
+// the directory it resolved in; such references fail with
+// ErrVocabularyEscape.
+func (v *vocabResolver) read(ref string) (map[string]bool, error) {
+	name := filepath.FromSlash(ref) + ".md"
+	if !filepath.IsLocal(name) {
+		return nil, fmt.Errorf("%w: %w: schema 'from' target '%s'", ErrSchema, ErrVocabularyEscape, ref)
+	}
+	parent := filepath.Dir(v.schemaDir)
+	bases := []string{v.schemaDir}
+	if !strings.Contains(ref, "/") {
+		bases = append(bases, filepath.Join(parent, "assets"), filepath.Join(parent, "references"), parent)
+	}
+	for _, base := range bases {
+		r, err := v.root(base)
+		if err != nil {
+			return nil, err
+		}
+		if r == nil {
 			continue
 		}
-		raw, err := os.ReadFile(candidate)
+		raw, err := readRootFile(r, name)
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errIsDir) {
+				continue
+			}
+			if isRootEscape(err) {
+				return nil, fmt.Errorf("%w: %w: schema 'from' target '%s'", ErrSchema, ErrVocabularyEscape, ref)
+			}
 			return nil, fmt.Errorf("%w: %v", ErrSchema, err)
 		}
-		values := make(map[string]bool)
-		for _, block := range vocabPattern.FindAllStringSubmatch(string(raw), -1) {
-			for _, line := range strings.Split(block[1], "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "#") {
-					values[line] = true
-				}
-			}
-		}
-		return values, nil
+		return parseVocabulary(raw), nil
 	}
 	return nil, fmt.Errorf("%w: schema 'from' target '%s' not found as a constant file", ErrSchema, ref)
+}
+
+var errIsDir = errors.New("is a directory")
+
+// readRootFile reads name inside r, refusing directories.
+func readRootFile(r *os.Root, name string) ([]byte, error) {
+	f, err := r.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, errIsDir
+	}
+	return io.ReadAll(f)
+}
+
+// isRootEscape reports whether err is os.Root refusing a path that
+// leaves the root. The os package does not export a sentinel for it.
+func isRootEscape(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "path escapes from parent")
+}
+
+// parseVocabulary extracts the non-empty non-# lines inside fenced
+// code blocks.
+func parseVocabulary(raw []byte) map[string]bool {
+	values := make(map[string]bool)
+	for _, block := range vocabPattern.FindAllStringSubmatch(string(raw), -1) {
+		for _, line := range strings.Split(block[1], "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				values[line] = true
+			}
+		}
+	}
+	return values
 }
 
 func fileExists(path string) bool {
