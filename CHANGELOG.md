@@ -6,9 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `WithSymlinkPolicy(SymlinkPolicy)` loader option for `MDFolder`: `FollowWithinRoot` (default), `FollowAny`, or `NoFollow`, plus `MDFolder.SymlinkPolicy()`. `SymlinkPolicy`, its constants, `DefaultSymlinkPolicy`, `ErrPathEscapesRoot`, and `ErrSymlinkNotAllowed` are re-exported from dirly, and an unknown policy makes `NewMDFolder` fail with the new `ErrInvalidSymlinkPolicy`.
+
 ### Changed
 
-- markly now builds on dirly v1.2.0 for folder discovery. `MDFolder` still opens the discovered files itself, so dirly's symlink policy does not yet apply to markly's reads.
+- markly now builds on dirly v1.3.0, and `MDFolder` reads its files through dirly's `Directory.Open` instead of opening them directly, so the symlink policy applies to metadata parsing and to every lazy `LoadContent`. Files opened with `NewMDFile`, `NewMDFileWithContent`, or the in-memory constructors are unaffected.
 
 ### Fixed
 
@@ -16,7 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ### Security
 
-- GO-2026-4602: **Breaking:** the minimum Go version is now 1.26.11 (also required by dirly v1.2.0), which clears this and the other standard-library advisories reported against 1.26.0; under 1.26.0 the advisory was reachable through `validate.CollectDocs`. To upgrade, build with Go 1.26.11 or later.
+- GO-2026-4602: **Breaking:** the minimum Go version is now 1.26.11 (also required by dirly v1.2.0 and later), which clears this and the other standard-library advisories reported against 1.26.0; under 1.26.0 the advisory was reachable through `validate.CollectDocs`. CI now pins the `golang:1.26.11` image. To upgrade, build with Go 1.26.11 or later.
+- **Breaking:** An `.md` symlink inside an `MDFolder` that resolves outside the folder is no longer read; it is skipped and reported in `Errors()` with an error wrapping `ErrPathEscapesRoot`. Under the default policy, reads go through an `os.Root` at the resolved folder root, so a file swapped for an escaping symlink after discovery is refused as well. If your folders deliberately link to files elsewhere, use `NewMDFolder(path, markly.WithSymlinkPolicy(markly.FollowAny))`.
 
 ## [1.7.1] - 2026-10-10
 
