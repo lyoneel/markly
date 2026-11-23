@@ -42,13 +42,15 @@ func (md *MDFile) applyBodyLines(lines []string) {
 // frontmatterLineCount returns the number of file lines occupied by
 // the frontmatter block including delimiters, plus the separating
 // blank line Serialize inserts after it. Returns 0 when there is no
-// frontmatter.
+// frontmatter. When the metadata cannot be serialized, the block is
+// counted as empty; Render and Save report that error.
 func (md *MDFile) frontmatterLineCount() int {
 	if md.metadata == nil || len(md.metadata.data) == 0 || md.Type == "" {
 		return 0
 	}
+	lines, _ := md.serializeMetadata()
 	// opening delimiter + metadata lines + closing delimiter + blank line
-	return len(md.serializeMetadata()) + 3
+	return len(lines) + 3
 }
 
 // AppendLine adds a line at the end of the body.

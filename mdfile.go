@@ -33,23 +33,57 @@ var validFMTypes = map[FMType]bool{
 	FMTypeTOML: true,
 }
 
+// ErrMetadataSerialization reports that the metadata could not be
+// turned back into frontmatter text: a custom serializer returned an
+// error, or a value has no YAML/TOML form (a func, a channel, ...).
+// Render, Save and SaveAtomic return it wrapped; detect it with
+// errors.Is. Save and SaveAtomic never touch the file when it occurs.
+var ErrMetadataSerialization = errors.New("metadata serialization failed")
+
 // Serialize returns the full file content as a string, including frontmatter and body.
 // Frontmatter is serialized based on md.Type ("yaml" or "toml").
 // If md.metadata is nil or empty, no frontmatter is included.
 // In-memory documents (string/bytes constructors) load their content
 // on demand so the body is never lost. For lazy disk-backed files
 // without a loaded content, only frontmatter is returned.
+//
+// Serialize returns an empty string when the metadata cannot be
+// serialized; use Render to get the error.
 func (md *MDFile) Serialize() string {
+	out, err := md.Render()
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// Render is Serialize with error reporting: it returns the full file
+// content, or an error wrapping ErrMetadataSerialization when the
+// metadata cannot be serialized (a failing custom serializer, or a
+// value YAML/TOML cannot encode).
+func (md *MDFile) Render() (string, error) {
+	out, _, err := md.render()
+	return out, err
+}
+
+// render builds the file content and reports how many metadata lines
+// the frontmatter block holds.
+func (md *MDFile) render() (string, int, error) {
 	if md.content == nil && md.source != nil {
 		_ = md.LoadContent()
 	}
 	var fileContent strings.Builder
+	metaLines := 0
 
 	// Add frontmatter if metadata exists and Type is set
 	if md.metadata != nil && len(md.metadata.data) > 0 && md.Type != "" {
+		metadataLines, err := md.serializeMetadata()
+		if err != nil {
+			return "", 0, err
+		}
+		metaLines = len(metadataLines)
 		delimiter := getDelimiterForType(md.Type)
 		fileContent.WriteString(delimiter + newlineChar)
-		metadataLines := md.serializeMetadata()
 		for _, line := range metadataLines {
 			fileContent.WriteString(line + newlineChar)
 		}
@@ -69,36 +103,46 @@ func (md *MDFile) Serialize() string {
 		}
 	}
 
-	return fileContent.String()
+	return fileContent.String(), metaLines, nil
+}
+
+// prepareSave loads the body and renders the file content. Nothing is
+// written and no state changes when rendering fails.
+func (md *MDFile) prepareSave() (string, int, error) {
+	if md.path == "" {
+		return "", 0, fmt.Errorf("cannot save: file path is empty")
+	}
+	if err := md.ensureSourceContent(); err != nil {
+		return "", 0, err
+	}
+	return md.render()
 }
 
 // Save writes the MDFile back to disk, preserving YAML/TOML frontmatter format.
-// Recalculates line ranges if metadata was modified.
+// Recalculates line ranges if metadata was modified. When the metadata
+// cannot be serialized, Save returns an error wrapping
+// ErrMetadataSerialization and leaves the file untouched.
 func (md *MDFile) Save() error {
-	if md.path == "" {
-		return fmt.Errorf("cannot save: file path is empty")
-	}
-
-	if err := md.ensureSourceContent(); err != nil {
+	out, metaLines, err := md.prepareSave()
+	if err != nil {
 		return err
 	}
-	md.refreshMetadataLineRange()
-
-	return os.WriteFile(md.path, []byte(md.Serialize()), 0644)
+	if err := os.WriteFile(md.path, []byte(out), 0644); err != nil {
+		return err
+	}
+	md.refreshMetadataLineRange(metaLines)
+	return nil
 }
 
 // SaveAtomic writes the MDFile back to disk through a uniquely named
 // temp file in the target directory, then renames it over the target.
-// A crash mid-write leaves the previous file intact.
+// A crash mid-write leaves the previous file intact. Serialization
+// errors are returned before any file is created.
 func (md *MDFile) SaveAtomic() error {
-	if md.path == "" {
-		return fmt.Errorf("cannot save: file path is empty")
-	}
-
-	if err := md.ensureSourceContent(); err != nil {
+	out, metaLines, err := md.prepareSave()
+	if err != nil {
 		return err
 	}
-	md.refreshMetadataLineRange()
 
 	tmp, err := os.CreateTemp(filepath.Dir(md.path), filepath.Base(md.path)+".tmp-*")
 	if err != nil {
@@ -106,22 +150,26 @@ func (md *MDFile) SaveAtomic() error {
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	if _, err := tmp.WriteString(md.Serialize()); err != nil {
+	if _, err := tmp.WriteString(out); err != nil {
 		tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, md.path)
+	if err := os.Rename(tmpPath, md.path); err != nil {
+		return err
+	}
+	md.refreshMetadataLineRange(metaLines)
+	return nil
 }
 
 // refreshMetadataLineRange recalculates the frontmatter line range
-// after metadata modifications.
-func (md *MDFile) refreshMetadataLineRange() {
+// after metadata modifications, given the number of serialized
+// metadata lines.
+func (md *MDFile) refreshMetadataLineRange(metaLines int) {
 	if md.metadata != nil && md.metadata.modified {
-		lines := md.serializeMetadata()
-		newLineCount := len(lines) + 3 // delimiters (2) + blank line (1)
+		newLineCount := metaLines + 3 // delimiters (2) + blank line (1)
 		md.metadata.FromLine = 1
 		md.metadata.ToLine = newLineCount - 2
 		md.metadata.modified = false
@@ -149,10 +197,11 @@ func getDelimiterForType(formatType FMType) string {
 	return yamlDelimiter // default to YAML
 }
 
-// serializeMetadata serializes metadata back to lines based on Type format.
-func (md *MDFile) serializeMetadata() []string {
+// serializeMetadata serializes metadata back to lines based on Type
+// format. Failures wrap ErrMetadataSerialization.
+func (md *MDFile) serializeMetadata() ([]string, error) {
 	if md.metadata == nil || len(md.metadata.data) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	switch md.Type {
@@ -166,36 +215,48 @@ func (md *MDFile) serializeMetadata() []string {
 // SetSerializer registers a custom frontmatter serializer for YAML
 // documents. The returned text (without delimiters) is used verbatim
 // as the frontmatter block. TOML documents keep the builtin marshaler.
+// An error from fn makes Render, Save and SaveAtomic fail with an
+// error wrapping both ErrMetadataSerialization and fn's error.
 func (md *MDFile) SetSerializer(fn func(meta map[string]any) (string, error)) {
 	md.serializer = fn
 }
 
 // serializeYaml serializes metadata to YAML lines.
-func (md *MDFile) serializeYaml() []string {
+func (md *MDFile) serializeYaml() ([]string, error) {
 	if md.serializer != nil {
 		out, err := md.serializer(md.metadata.data)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("%w: custom serializer: %w", ErrMetadataSerialization, err)
 		}
-		return strings.Split(strings.TrimSpace(out), newlineChar)
+		return strings.Split(strings.TrimSpace(out), newlineChar), nil
 	}
 
-	yamlBytes, err := yaml.Marshal(md.metadata.data)
+	yamlBytes, err := safeMarshal(yaml.Marshal, md.metadata.data)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("%w: yaml: %w", ErrMetadataSerialization, err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(yamlBytes)), newlineChar)
-	return lines
+	return strings.Split(strings.TrimSpace(string(yamlBytes)), newlineChar), nil
 }
 
 // serializeToml serializes metadata to TOML lines.
-func (md *MDFile) serializeToml() []string {
-	tomlBytes, err := toml.Marshal(md.metadata.data)
+func (md *MDFile) serializeToml() ([]string, error) {
+	tomlBytes, err := safeMarshal(toml.Marshal, md.metadata.data)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("%w: toml: %w", ErrMetadataSerialization, err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(tomlBytes)), newlineChar)
-	return lines
+	return strings.Split(strings.TrimSpace(string(tomlBytes)), newlineChar), nil
+}
+
+// safeMarshal calls marshal and turns a panic into an error. yaml.v3
+// panics instead of returning an error for values it cannot encode,
+// such as funcs and channels.
+func safeMarshal(marshal func(any) ([]byte, error), v any) (out []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = nil, fmt.Errorf("cannot encode metadata: %v", r)
+		}
+	}()
+	return marshal(v)
 }
 
 // MDFile represents a Markdown file with YAML frontmatter metadata.
