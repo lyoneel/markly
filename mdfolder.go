@@ -2,6 +2,7 @@ package markly
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,8 @@ type MDFolder struct {
 	defaultPerm os.FileMode // 0644 by default
 
 	skipDotDirs bool // skip files inside dot-directories
+
+	symlinkPolicy SymlinkPolicy // how symlinks below the root are treated
 }
 
 // LoaderOption configures MDFolder behavior.
@@ -59,7 +62,21 @@ func WithSkipDotDirs(skip bool) LoaderOption {
 	}
 }
 
+// WithSymlinkPolicy sets how symlinks below the folder root are treated
+// when files are read: FollowWithinRoot (the default), FollowAny, or
+// NoFollow. Files refused by the policy are skipped and reported through
+// Errors. Use FollowAny to keep the behavior of markly v1.7.1 and
+// earlier, where a symlinked file was read wherever it pointed. An
+// unknown value makes NewMDFolder fail with ErrInvalidSymlinkPolicy.
+func WithSymlinkPolicy(policy SymlinkPolicy) LoaderOption {
+	return func(mf *MDFolder) {
+		mf.symlinkPolicy = policy
+	}
+}
+
 // NewMDFolder creates a new MDFolder for basic file discovery with default dependency config.
+// Files are read through dirly under the folder's symlink policy
+// (FollowWithinRoot unless WithSymlinkPolicy says otherwise).
 func NewMDFolder(dirPath string, opts ...LoaderOption) (*MDFolder, error) {
 	mf := &MDFolder{
 		files:        make(map[string]*MDFile),
@@ -68,16 +85,41 @@ func NewMDFolder(dirPath string, opts ...LoaderOption) (*MDFolder, error) {
 		depKeys:      []string{"deps", "depends", "dependencies", "depends_on", "prerequisites"},
 		depSeparator: ",",
 		defaultPerm:  0644, // Standard file permissions
-	}
 
-	// Initialize dirly.Directory with markdown extension filter (case-insensitive)
-	mf.dir = dirly.NewFilteredDirectory(dirPath).WithExtensions("md").Build()
+		symlinkPolicy: DefaultSymlinkPolicy,
+	}
 
 	for _, opt := range opts {
 		opt(mf)
 	}
+	if !validSymlinkPolicy(mf.symlinkPolicy) {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidSymlinkPolicy, mf.symlinkPolicy)
+	}
+
+	// Initialize dirly.Directory with markdown extension filter (case-insensitive).
+	// Options run first so the symlink policy is part of the build.
+	mf.dir = dirly.NewFilteredDirectory(dirPath).
+		WithExtensions("md").
+		WithSymlinkPolicy(mf.symlinkPolicy).
+		Build()
 
 	return mf, nil
+}
+
+// SymlinkPolicy returns the symlink policy the folder reads files with.
+func (mf *MDFolder) SymlinkPolicy() SymlinkPolicy {
+	return mf.dir.SymlinkPolicy()
+}
+
+// fileOpener returns an opener that reads relPath through dirly's
+// Directory.Open, so the folder's symlink policy applies to every read.
+// Under FollowWithinRoot and NoFollow dirly opens the file through an
+// os.Root at the resolved folder root, which also holds if a path
+// component is swapped for a symlink after discovery.
+func (mf *MDFolder) fileOpener(relPath string) func() (io.ReadCloser, error) {
+	return func() (io.ReadCloser, error) {
+		return mf.dir.Open(relPath)
+	}
 }
 
 // buildAdjacencyMap extracts dependencies from metadata and builds the dependency graph.
@@ -145,6 +187,7 @@ func (mf *MDFolder) GetAllByGlob(glob string) map[string]*MDFile {
 		}
 		fullPath := filepath.Join(mf.dir.BasePath(), path)
 		md := NewMDFile(fullPath)
+		md.open = mf.fileOpener(path)
 
 		// Process metadata immediately to ensure it's available
 		if err = md.processMetadata(); err != nil && !os.IsNotExist(err) {

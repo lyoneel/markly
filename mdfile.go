@@ -7,8 +7,10 @@ package markly
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -212,6 +214,8 @@ type MDFile struct {
 	strictDuplicates bool // reject duplicate top-level frontmatter keys
 
 	serializer func(map[string]any) (string, error) // custom YAML frontmatter serializer
+
+	open func() (io.ReadCloser, error) // policy-checked reader for MDFolder files; nil reads md.path directly
 }
 
 // FileOption configures MDFile loading behavior.
@@ -490,6 +494,16 @@ func WithStrictDuplicates() FileOption {
 func (md *MDFile) openReader() (io.ReadCloser, error) {
 	if md.source != nil {
 		return io.NopCloser(bytes.NewReader(md.source)), nil
+	}
+	if md.open != nil {
+		file, err := md.open()
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, fmt.Errorf("metadata not found: %s", md.path)
+			}
+			return nil, fmt.Errorf("open failed: %s: %w", md.path, err)
+		}
+		return file, nil
 	}
 	file, err := os.Open(md.path)
 	if err != nil {
