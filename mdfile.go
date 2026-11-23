@@ -12,7 +12,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -122,45 +121,68 @@ func (md *MDFile) prepareSave() (string, int, error) {
 // Recalculates line ranges if metadata was modified. When the metadata
 // cannot be serialized, Save returns an error wrapping
 // ErrMetadataSerialization and leaves the file untouched.
+//
+// Save writes in place (os.WriteFile): a new file gets DefaultFilePerm
+// subject to umask, and a symlink is followed. Files loaded through an
+// MDFolder are written through the folder instead (see SaveAtomic).
+// Use SaveAtomic when a crash must never leave a partial file.
 func (md *MDFile) Save() error {
 	out, metaLines, err := md.prepareSave()
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(md.path, []byte(out), 0644); err != nil {
+	if w := md.folderWriter(); w != nil {
+		err = w([]byte(out))
+	} else {
+		err = os.WriteFile(md.path, []byte(out), DefaultFilePerm) // #nosec G306 -- markdown documents are meant to be readable; umask applies
+	}
+	if err != nil {
 		return err
 	}
 	md.refreshMetadataLineRange(metaLines)
 	return nil
 }
 
-// SaveAtomic writes the MDFile back to disk through a uniquely named
-// temp file in the target directory, then renames it over the target.
-// A crash mid-write leaves the previous file intact. Serialization
-// errors are returned before any file is created.
+// SaveAtomic writes the MDFile back to disk atomically: the content goes
+// to a uniquely named temp file in the target's directory, is fsynced,
+// and is renamed over the target, and the directory is then fsynced on
+// POSIX (best effort). A crash leaves either the old or the new content.
+//
+//   - An existing file keeps its mode and, on Unix, its owner and group
+//     where the process is allowed to set them.
+//   - A symlink is resolved and its target is replaced; the link stays.
+//   - A new file gets DefaultFilePerm, subject to umask.
+//   - Serialization errors are returned before anything is written, and
+//     on any failure the temp file is removed and the target is left
+//     unchanged. A missing or unwritable directory is an error.
+//
+// Files loaded through an MDFolder are written through dirly's atomic
+// writer instead, which applies the folder's symlink policy and keeps
+// mode and ownership (failing with dirly.ErrOwnership when it cannot).
+// After SetPath to another location the file is saved standalone.
 func (md *MDFile) SaveAtomic() error {
 	out, metaLines, err := md.prepareSave()
 	if err != nil {
 		return err
 	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(md.path), filepath.Base(md.path)+".tmp-*")
+	if w := md.folderWriter(); w != nil {
+		err = w([]byte(out))
+	} else {
+		err = writeFileAtomic(md.path, []byte(out), DefaultFilePerm)
+	}
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.WriteString(out); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, md.path); err != nil {
-		return err
-	}
 	md.refreshMetadataLineRange(metaLines)
+	return nil
+}
+
+// folderWriter returns the MDFolder writer when the file still points at
+// the path it was loaded from, or nil for standalone files.
+func (md *MDFile) folderWriter() func([]byte) error {
+	if md.write != nil && md.path == md.writePath {
+		return md.write
+	}
 	return nil
 }
 
@@ -277,6 +299,9 @@ type MDFile struct {
 	serializer func(map[string]any) (string, error) // custom YAML frontmatter serializer
 
 	open func() (io.ReadCloser, error) // policy-checked reader for MDFolder files; nil reads md.path directly
+
+	write     func([]byte) error // policy-checked atomic writer for MDFolder files
+	writePath string             // path write belongs to; SetPath elsewhere disables it
 }
 
 // FileOption configures MDFile loading behavior.

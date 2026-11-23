@@ -186,6 +186,8 @@ func (mf *MDFolder) GetAllByGlob(glob string) map[string]*MDFile {
 		fullPath := filepath.Join(mf.dir.BasePath(), path)
 		md := NewMDFile(fullPath)
 		md.open = mf.fileOpener(path)
+		md.write = mf.fileWriter(path)
+		md.writePath = fullPath
 
 		// Process metadata immediately to ensure it's available
 		if err = md.processMetadata(); err != nil && !os.IsNotExist(err) {
