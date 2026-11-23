@@ -340,134 +340,201 @@ func (mf *MDFolder) GetByMetadata(filters map[string]any) []*MDFile {
 	return result
 }
 
-// getLoadOrderInternal performs a topological sort (Kahn's algorithm)
-// over the adjacency map. Edges are counted once per distinct
-// dependency, and a reverse index of dependents keeps the sort linear
-// in files plus edges. Ties are broken by name so the order is stable.
-func (mf *MDFolder) getLoadOrderInternal(adjMapCopy map[string][]string) ([]*MDFile, error) {
+// depGraph is the dependency graph with nodes numbered in name order,
+// so every walk over it is deterministic without sorting as it goes.
+// Nodes are the folder's files plus any dependency target that is not
+// a file; edges point from a file to its distinct dependencies.
+type depGraph struct {
+	names  []string // node names, sorted
+	deps   [][]int  // deps[i]: dependencies of node i, in declaration order
+	isFile []bool   // node is a loaded file, not only a dependency target
+}
+
+// buildGraph indexes the adjacency map. Cost: one sort of the node
+// names, then linear in nodes plus edges.
+func (mf *MDFolder) buildGraph() *depGraph {
+	seen := make(map[string]bool, len(mf.files))
+	names := make([]string, 0, len(mf.files))
+	add := func(n string) {
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	for name := range mf.files {
+		add(name)
+	}
+	for name, deps := range mf.adjacencyMap {
+		add(name)
+		for _, d := range deps {
+			add(d)
+		}
+	}
+	sort.Strings(names)
+	index := make(map[string]int, len(names))
+	for i, n := range names {
+		index[n] = i
+	}
+	edges := 0
+	for _, deps := range mf.adjacencyMap {
+		edges += len(deps)
+	}
+	// All dependency lists share one backing array.
+	flat := make([]int, 0, edges)
+	g := &depGraph{names: names, deps: make([][]int, len(names)), isFile: make([]bool, len(names))}
+	// mark[d] == i+1 when node i already lists d: a repeated dependency
+	// counts once without a per-node set.
+	mark := make([]int, len(names))
+	for i, n := range names {
+		_, g.isFile[i] = mf.files[n]
+		start := len(flat)
+		for _, name := range mf.adjacencyMap[n] {
+			if d := index[name]; mark[d] != i+1 {
+				mark[d] = i + 1
+				flat = append(flat, d)
+			}
+		}
+		g.deps[i] = flat[start:len(flat):len(flat)]
+	}
+	return g
+}
+
+// GetLoadOrder returns files in topological order (dependencies first).
+//
+// It runs Kahn's algorithm in time linear in files plus dependencies
+// (after one sort of the names). Files with no dependency between them
+// come out in a fixed order: the files without dependencies in name
+// order, then each file as soon as its last dependency is placed, in
+// name order among files freed by the same dependency. The result is
+// the same on every run. A cycle returns an error.
+func (mf *MDFolder) GetLoadOrder() ([]*MDFile, error) {
+	if len(mf.files) == 0 {
+		mf.GetAll() // Ensure files are loaded first
+	}
+	g := mf.buildGraph()
+	n := len(g.names)
+
+	// dependents[d] lists the nodes depending on d in ascending order,
+	// because they are appended while i ascends; so the nodes one
+	// placement frees are already in name order.
+	// The lists are laid out in one array (counting sort by dependency).
+	inDegree := make([]int, n)
+	offset := make([]int, n+1)
+	for i, deps := range g.deps {
+		inDegree[i] = len(deps)
+		for _, d := range deps {
+			offset[d+1]++
+		}
+	}
+	for d := range n {
+		offset[d+1] += offset[d]
+	}
+	flat := make([]int, offset[n])
+	fill := append([]int(nil), offset[:n]...)
+	for i, deps := range g.deps {
+		for _, d := range deps {
+			flat[fill[d]] = i
+			fill[d]++
+		}
+	}
+	dependents := func(d int) []int { return flat[offset[d]:offset[d+1]] }
+
+	queue := make([]int, 0, n)
+	for i := range n {
+		if inDegree[i] == 0 {
+			queue = append(queue, i)
+		}
+	}
 	ordered := make([]*MDFile, 0, len(mf.files))
-	inDegree := make(map[string]int)
-	dependents := make(map[string][]string)
-
-	for file := range mf.files {
-		inDegree[file] = 0
-	}
-	for file, deps := range adjMapCopy {
-		if _, exists := inDegree[file]; !exists {
-			inDegree[file] = 0
+	for head := 0; head < len(queue); head++ {
+		current := queue[head]
+		if g.isFile[current] {
+			ordered = append(ordered, mf.files[g.names[current]])
 		}
-		for _, dep := range uniqueDeps(deps) {
-			if _, exists := inDegree[dep]; !exists {
-				inDegree[dep] = 0
-			}
-			inDegree[file]++ // file depends on dep
-			dependents[dep] = append(dependents[dep], file)
-		}
-	}
-
-	queue := make([]string, 0)
-	for file, degree := range inDegree {
-		if degree == 0 {
-			queue = append(queue, file)
-		}
-	}
-	sort.Strings(queue)
-
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-
-		if md, exists := mf.files[current]; exists {
-			ordered = append(ordered, md)
-		}
-
-		var ready []string
-		for _, file := range dependents[current] {
-			inDegree[file]--
-			if inDegree[file] == 0 {
-				ready = append(ready, file)
+		for _, dep := range dependents(current) {
+			inDegree[dep]--
+			if inDegree[dep] == 0 {
+				queue = append(queue, dep)
 			}
 		}
-		sort.Strings(ready)
-		queue = append(queue, ready...)
 	}
 
 	if len(ordered) != len(mf.files) {
 		return nil, fmt.Errorf("circular dependency detected")
 	}
-
 	return ordered, nil
 }
 
-// GetLoadOrder returns files in topological order (dependencies first).
-func (mf *MDFolder) GetLoadOrder() ([]*MDFile, error) {
-	if len(mf.files) == 0 {
-		mf.GetAll() // Ensure files are loaded first
-	}
-
-	// Create a copy of adjacency map to avoid modifying original
-	adjMapCopy := make(map[string][]string)
-	for k, v := range mf.adjacencyMap {
-		adjMapCopy[k] = make([]string, len(v))
-		copy(adjMapCopy[k], v)
-	}
-
-	return mf.getLoadOrderInternal(adjMapCopy)
-}
-
-// DetectCycles returns all cycle paths as []string.
+// DetectCycles returns cycle paths as strings such as "a.md -> b.md".
+// A file that depends on itself is the one-file cycle "a.md".
+//
+// It is an iterative depth-first search, linear in files plus
+// dependencies plus the length of the reported cycles, so deep chains
+// cannot overflow the stack. The search starts from files in name
+// order and follows dependencies in declaration order, so the result
+// is the same on every run. Each edge that closes a cycle is reported
+// once; a cycle that is only reachable through an already explored
+// file is covered by the report for that file.
 func (mf *MDFolder) DetectCycles() []string {
 	if len(mf.files) == 0 {
 		mf.GetAll() // Ensure files are loaded first
 	}
+	g := mf.buildGraph()
+	n := len(g.names)
 
+	const unvisited = -2
+	const done = -1
+	// state[i] is unvisited, done, or the position of node i on path.
+	state := make([]int, n)
+	for i := range state {
+		state[i] = unvisited
+	}
+	next := make([]int, n) // next dependency of node i to follow
+	var path []int
 	var cycles []string
-	visited := make(map[string]bool)
-	recStack := make(map[string]bool)
-	path := []string{}
 
-	var dfs func(node string) bool
-	dfs = func(node string) bool {
-		visited[node] = true
-		recStack[node] = true
-		path = append(path, node)
-
-		for _, dep := range mf.adjacencyMap[node] {
-			if !visited[dep] {
-				if dfs(dep) {
-					return true
+	for root := range n {
+		if state[root] != unvisited || !g.isFile[root] {
+			continue
+		}
+		state[root] = 0
+		path = append(path[:0], root)
+		for len(path) > 0 {
+			node := path[len(path)-1]
+			if next[node] == len(g.deps[node]) {
+				state[node] = done
+				path = path[:len(path)-1]
+				continue
+			}
+			dep := g.deps[node][next[node]]
+			next[node]++
+			switch state[dep] {
+			case unvisited:
+				state[dep] = len(path)
+				path = append(path, dep)
+			case done:
+			default: // on the path: this edge closes a cycle
+				cycle := make([]string, 0, len(path)-state[dep])
+				for _, i := range path[state[dep]:] {
+					cycle = append(cycle, g.names[i])
 				}
-			} else if recStack[dep] {
-				cycleStart := -1
-				for i, n := range path {
-					if n == dep {
-						cycleStart = i
-						break
-					}
-				}
-				if cycleStart >= 0 {
-					cycle := append([]string{}, path[cycleStart:]...)
-					cycles = append(cycles, strings.Join(cycle, " -> "))
-				}
+				cycles = append(cycles, strings.Join(cycle, " -> "))
 			}
 		}
-
-		recStack[node] = false
-		path = path[:len(path)-1]
-		return false
 	}
-
-	for file := range mf.files {
-		if !visited[file] {
-			dfs(file)
-		}
-	}
-
 	return cycles
 }
 
-// GetAllWithDependencies returns a file and all its transitive dependencies in order.
-// Uses separate path/processed maps: path for cycle detection, processed for deduplication.
+// GetAllWithDependencies returns a file and all its transitive
+// dependencies, each once, dependencies before the files that need
+// them: a depth-first post-order that follows dependencies in
+// declaration order. It runs in time linear in the files and
+// dependencies it reaches.
+//
+// visited, when not nil, holds the files already on the caller's
+// resolution path; reaching one of them is a cycle. A cycle returns an
+// error naming the file that closes it, and a dependency that is not a
+// file in the folder returns a "file not found" error.
 func (mf *MDFolder) GetAllWithDependencies(filename string, visited map[string]bool) ([]*MDFile, error) {
 	if visited == nil {
 		if len(mf.files) == 0 {
@@ -480,60 +547,48 @@ func (mf *MDFolder) GetAllWithDependencies(filename string, visited map[string]b
 	if visited[filename] {
 		return nil, fmt.Errorf("circular dependency detected at %s", filename)
 	}
-
 	visited[filename] = true
+	path := visited
 
-	// Use internal method with separate processed cache
-	return mf.getAllWithDepsInternal(filename, visited, make(map[string]bool))
-}
-
-// getAllWithDepsInternal is the internal recursive implementation.
-// path: nodes in current DFS stack (cycle detection)
-// processed: already-resolved files (deduplication)
-func (mf *MDFolder) getAllWithDepsInternal(filename string, path, processed map[string]bool) ([]*MDFile, error) {
-	// If already processed, return cached file
-	if processed[filename] {
-		if md, exists := mf.files[filename]; exists {
-			return []*MDFile{md}, nil
-		}
-		return nil, fmt.Errorf("file not found: %s", filename)
+	type frame struct {
+		name string
+		next int
 	}
-
-	processed[filename] = true
+	processed := map[string]bool{filename: true}
+	stack := []frame{{name: filename}}
 	var result []*MDFile
 
-	for _, dep := range mf.adjacencyMap[filename] {
-		// Cycle check: dep is in current DFS path
-		if path[dep] {
-			return nil, fmt.Errorf("circular dependency detected at %s", dep)
+	for len(stack) > 0 {
+		top := &stack[len(stack)-1]
+		deps := mf.adjacencyMap[top.name]
+		if top.next < len(deps) {
+			dep := deps[top.next]
+			top.next++
+			if path[dep] {
+				return nil, fmt.Errorf("circular dependency detected at %s", dep)
+			}
+			if processed[dep] {
+				// Already placed (it is not on the path, so it is done).
+				if _, exists := mf.files[dep]; !exists {
+					return nil, fmt.Errorf("file not found: %s", dep)
+				}
+				continue
+			}
+			processed[dep] = true
+			path[dep] = true
+			stack = append(stack, frame{name: dep})
+			continue
 		}
-		path[dep] = true
 
-		deps, err := mf.getAllWithDepsInternal(dep, path, processed)
-		if err != nil {
-			return nil, err
+		md, exists := mf.files[top.name]
+		if !exists {
+			return nil, fmt.Errorf("file not found: %s", top.name)
 		}
-		result = append(result, deps...)
-
-		path[dep] = false // backtrack
-	}
-
-	// Deduplicate by path, preserving order
-	seen := make(map[string]bool)
-	deduped := make([]*MDFile, 0, len(result))
-	for _, md := range result {
-		if !seen[md.path] {
-			seen[md.path] = true
-			deduped = append(deduped, md)
-		}
-	}
-	result = deduped
-
-	if md, exists := mf.files[filename]; exists {
 		result = append(result, md)
-	} else {
-		return nil, fmt.Errorf("file not found: %s", filename)
+		if len(stack) > 1 {
+			path[top.name] = false // backtrack; the root stays marked
+		}
+		stack = stack[:len(stack)-1]
 	}
-
 	return result, nil
 }
