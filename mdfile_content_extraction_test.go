@@ -82,7 +82,9 @@ More description.`,
 			defer os.Remove(tmpFile)
 
 			md, _ := NewMDFileWithContent(tmpFile)
-			err := md.LoadContent()
+			if err := md.LoadContent(); err != nil {
+				t.Fatalf("LoadContent: %v", err)
+			}
 			content, err := md.GetContent()
 
 			if content == nil && err == nil {
