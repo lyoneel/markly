@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-23
+
 ### Added
 
 - `WithSymlinkPolicy(SymlinkPolicy)` loader option for `MDFolder`: `FollowWithinRoot` (default), `FollowAny`, or `NoFollow`, plus `MDFolder.SymlinkPolicy()`. `SymlinkPolicy`, its constants, `DefaultSymlinkPolicy`, `ErrPathEscapesRoot`, and `ErrSymlinkNotAllowed` are re-exported from dirly, and an unknown policy makes `NewMDFolder` fail with the new `ErrInvalidSymlinkPolicy`.
@@ -32,10 +34,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - `SaveAtomic` no longer resets the file mode to 0600 or replaces a symlink with a regular file.
 - Documents with a line longer than 64 KiB load; the limit is now `MaxLineLength` (16 MiB), and a longer line returns an error wrapping `bufio.ErrTooLong`.
 - A dependency listed twice in one file is counted once, so `GetLoadOrder` and `DetectCycles` no longer report a cycle for it.
+- A dependency field written as one string (`prerequisites: "a.md, b.md"`) is split on the separator set with `WithDepSeparator` (default `,`), with entries trimmed and empty entries and repeats dropped; before, the whole string was read as one dependency and `WithDepSeparator` had no effect. YAML lists are unchanged.
 - `validate.CollectDocs` matches glob patterns that start with `./`, such as `./docs/*.md`.
 - After `Save` or `SaveAtomic` of edited metadata, `FromLine` stays 2, the value a fresh parse reports, instead of becoming 1.
 - In documents without frontmatter, heading `FromLine` values are no longer off by one, `ToLine` spans the section, and leading blank lines survive a save.
-- The README and DEVELOPMENT examples compile against the current API, and a test type-checks them; SECURITY.md lists 1.7.x as the supported version.
+- The README and DEVELOPMENT examples compile against the current API, and a test type-checks them; SECURITY.md lists 1.8.x as the supported version.
 
 ### Security
 
@@ -114,7 +117,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - Batch read and write operations.
 - Pluggable YAML frontmatter serializer.
 
-[Unreleased]: https://gitlab.com/lyoneel/markly/-/compare/v1.7.1...HEAD
+[Unreleased]: https://gitlab.com/lyoneel/markly/-/compare/v1.8.0...HEAD
+[1.8.0]: https://gitlab.com/lyoneel/markly/-/compare/v1.7.1...v1.8.0
 [1.7.1]: https://gitlab.com/lyoneel/markly/-/compare/v1.6.0...v1.7.1
 [1.6.0]: https://gitlab.com/lyoneel/markly/-/compare/v1.5.0...v1.6.0
 [1.5.0]: https://gitlab.com/lyoneel/markly/-/compare/v1.4.0...v1.5.0
