@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ErrNoFrontmatter reports that a document carries no frontmatter

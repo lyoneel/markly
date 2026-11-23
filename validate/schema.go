@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"gitlab.com/lyoneel/markly"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ErrSchema reports a malformed schema file. LoadSchema wraps every
