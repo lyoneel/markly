@@ -609,9 +609,9 @@ func (md *MDFile) LoadContent() error {
 
 	hasFrontmatter = firstLine == yamlDelimiter || firstLine == tomlDelimiter
 
-	var frontmatterLines []string
 	if hasFrontmatter {
-		// First line is already consumed, now read until closing delimiter
+		// First line is already consumed; skip the frontmatter block up to
+		// the closing delimiter. Metadata is parsed by processMetadata.
 		lineNum := 1 // Start counting from first line (the opening delimiter)
 		for scanner.Scan() {
 			lineNum++
@@ -619,7 +619,6 @@ func (md *MDFile) LoadContent() error {
 			if line == yamlDelimiter || line == tomlDelimiter {
 				break // Found closing delimiter (either --- or +++)
 			}
-			frontmatterLines = append(frontmatterLines, scanner.Text())
 		}
 
 		// Parse remaining content as markdown (start from next line after closing delimiter)

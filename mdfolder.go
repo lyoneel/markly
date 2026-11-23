@@ -134,9 +134,7 @@ func (mf *MDFolder) buildAdjacencyMap() {
 
 		for _, key := range mf.depKeys {
 			if list := meta.GetStringList(key); len(list) > 0 {
-				for _, dep := range list {
-					deps = append(deps, dep)
-				}
+				deps = append(deps, list...)
 			} else if strVal := meta.GetString(key); strVal != "" {
 				parts := strings.Split(strVal, mf.depSeparator)
 				for _, p := range parts {
