@@ -1,6 +1,7 @@
 package markly
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -55,6 +56,9 @@ func (md *MDFile) frontmatterLineCount() int {
 
 // AppendLine adds a line at the end of the body.
 func (md *MDFile) AppendLine(line string) error {
+	if err := checkSingleLine("line", line); err != nil {
+		return err
+	}
 	if err := md.ensureBodyLoaded(); err != nil {
 		return err
 	}
@@ -88,6 +92,9 @@ func (md *MDFile) bodyIdxToFileLine(bodyIdx int) int {
 // InsertLine(len+1) appends at the end, matching ly-datum behavior
 // where line numbers point at existing lines.
 func (md *MDFile) InsertLine(line int, text string) error {
+	if err := checkSingleLine("text", text); err != nil {
+		return err
+	}
 	if err := md.ensureBodyLoaded(); err != nil {
 		return err
 	}
@@ -137,4 +144,21 @@ func (md *MDFile) lineAt(line int) (int, error) {
 		return 0, fmt.Errorf("line %d out of range", line)
 	}
 	return bodyIdx, nil
+}
+
+// ErrMultilineText reports text with a line break (\n or \r) passed to
+// an API that writes a single line: AppendLine, InsertLine,
+// SetSectionHeading, SetSectionBullet, InsertLineUnderHeading,
+// SetFirstHeading, and RewriteCheckboxTitle. Rejecting it keeps edits
+// from adding lines the caller did not ask for, such as a frontmatter
+// block. Use SetBody to replace the body with multi-line text.
+var ErrMultilineText = errors.New("text must be a single line")
+
+// checkSingleLine returns an error wrapping ErrMultilineText when s
+// contains a line break.
+func checkSingleLine(what, s string) error {
+	if strings.ContainsAny(s, "\r\n") {
+		return fmt.Errorf("%w: %s %q", ErrMultilineText, what, s)
+	}
+	return nil
 }

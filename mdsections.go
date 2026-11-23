@@ -72,6 +72,9 @@ func (md *MDFile) FindSectionBody(slug string) (string, bool) {
 
 // SetSectionHeading renames the `## ` heading identified by slug.
 func (md *MDFile) SetSectionHeading(slug, newTitle string) error {
+	if err := checkSingleLine("title", newTitle); err != nil {
+		return err
+	}
 	if err := md.ensureBodyLoaded(); err != nil {
 		return err
 	}
@@ -99,6 +102,12 @@ func sectionBulletLike(trimmed string) bool {
 // same key is replaced in place; otherwise the bullet is inserted on
 // the line right after the heading.
 func (md *MDFile) SetSectionBullet(slug, key, value string) error {
+	if err := checkSingleLine("key", key); err != nil {
+		return err
+	}
+	if err := checkSingleLine("value", value); err != nil {
+		return err
+	}
 	if err := md.ensureBodyLoaded(); err != nil {
 		return err
 	}
@@ -136,6 +145,12 @@ func (md *MDFile) SetSectionBullet(slug, key, value string) error {
 // it. When createMissing is true and the heading is absent, the heading
 // and the line are appended at the end of the body.
 func (md *MDFile) InsertLineUnderHeading(heading, line string, createMissing bool) error {
+	if err := checkSingleLine("heading", heading); err != nil {
+		return err
+	}
+	if err := checkSingleLine("line", line); err != nil {
+		return err
+	}
 	if err := md.ensureBodyLoaded(); err != nil {
 		return err
 	}

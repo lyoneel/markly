@@ -77,6 +77,9 @@ func (md *MDFile) RemoveFirstH1() error {
 // SetFirstHeading replaces the first level-1 heading with a new title,
 // inserting one at the top of the body when none exists.
 func (md *MDFile) SetFirstHeading(title string) error {
+	if err := checkSingleLine("title", title); err != nil {
+		return err
+	}
 	if err := md.ensureBodyLoaded(); err != nil {
 		return err
 	}

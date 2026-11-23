@@ -1,11 +1,25 @@
 package markly
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
 const checkboxPrefix = "- ["
+
+// ErrInvalidCheckboxMarker reports a SetCheckboxMarker marker other than
+// ' ', 'x', 'X', or '~'.
+var ErrInvalidCheckboxMarker = errors.New("invalid checkbox marker")
+
+// validCheckboxMarker reports whether b is an accepted checkbox marker.
+func validCheckboxMarker(b byte) bool {
+	switch b {
+	case ' ', 'x', 'X', '~':
+		return true
+	}
+	return false
+}
 
 // checkboxLine validates the line at the given body-relative index as a
 // checkbox line ("- [ ]", "- [x]", "- [~]") and returns its trimmed
@@ -21,8 +35,12 @@ func (md *MDFile) checkboxLine(bodyIdx int) (string, error) {
 
 // SetCheckboxMarker flips the marker of the checkbox on the given
 // absolute file line. The rest of the line stays intact. Valid markers
-// are ' ', 'x', and '~'.
+// are ' ', 'x', 'X', and '~'; any other byte fails with
+// ErrInvalidCheckboxMarker and leaves the line unchanged.
 func (md *MDFile) SetCheckboxMarker(line int, marker byte) error {
+	if !validCheckboxMarker(marker) {
+		return fmt.Errorf("%w: %q (use ' ', 'x', 'X', or '~')", ErrInvalidCheckboxMarker, marker)
+	}
 	if err := md.ensureBodyLoaded(); err != nil {
 		return err
 	}
@@ -49,6 +67,9 @@ func (md *MDFile) SetCheckboxMarker(line int, marker byte) error {
 // keeping indent, marker, and trailing suffixes (due dates, capture
 // timestamps).
 func (md *MDFile) RewriteCheckboxTitle(line int, newTitle string) error {
+	if err := checkSingleLine("title", newTitle); err != nil {
+		return err
+	}
 	if err := md.ensureBodyLoaded(); err != nil {
 		return err
 	}
