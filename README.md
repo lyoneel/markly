@@ -357,13 +357,49 @@ folder, _ := markly.NewMDFolder("./vault",
 
 files := folder.GetAll()
 for path, err := range folder.Errors() {
-    // files skipped because their frontmatter failed to parse
+    // files skipped because their frontmatter failed to parse,
+    // or because the symlink policy refused them
     fmt.Printf("%s: %v\n", path, err)
 }
 ```
 
 Metadata parse errors no longer log; they are collected and exposed
 through `Errors()`, keyed by relative path.
+
+### Symlinks
+
+`MDFolder` reads every file through dirly under a symlink policy, set
+with `WithSymlinkPolicy`:
+
+| Policy | Behavior |
+|--------|----------|
+| `markly.FollowWithinRoot` (default) | Symlinks are followed while the target stays inside the folder. A file whose link resolves outside the folder is skipped and reported in `Errors()` with an error wrapping `markly.ErrPathEscapesRoot`. |
+| `markly.FollowAny` | Symlinks are followed wherever they point (the behavior of v1.7.1 and earlier). |
+| `markly.NoFollow` | Any file reached through a symlink below the folder is skipped with `markly.ErrSymlinkNotAllowed`. |
+
+```go
+folder, err := markly.NewMDFolder("./vault") // FollowWithinRoot by default
+// markly.NewMDFolder("./vault", markly.WithSymlinkPolicy(markly.FollowAny))
+// opts back in to links that point outside the folder.
+if err != nil {
+    return err
+}
+folder.GetAll()
+for path, err := range folder.Errors() {
+    if errors.Is(err, markly.ErrPathEscapesRoot) {
+        fmt.Printf("%s: link points outside the folder\n", path)
+    }
+}
+```
+
+The policy is checked again on every lazy load, so a file swapped for an
+escaping symlink after discovery is refused too. A folder path that is
+itself a symlink (for example `~/notes -> ~/Sync/notes`) needs no
+change: its real location becomes the boundary. An unknown policy value
+makes `NewMDFolder` fail with `markly.ErrInvalidSymlinkPolicy`. Files
+opened directly with `NewMDFile` or `NewMDFileWithContent` are not
+affected by the policy, and `Save`/`SaveAtomic` write to the file path
+as before.
 
 ## Testing
 

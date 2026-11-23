@@ -26,12 +26,12 @@ The package is a single root package with these source files:
 Design patterns:
 
 - Lazy loading by default. Constructors parse metadata only; content loads on first `LoadContent()` or `GetContent()` call.
-- Functional options on constructors and the folder loader (`WithRawScalars`, `WithFenceAwareHeadings`, `WithDepKeys`, `WithDepSeparator`, `WithSkipDotDirs`).
+- Functional options on constructors and the folder loader (`WithRawScalars`, `WithFenceAwareHeadings`, `WithDepKeys`, `WithDepSeparator`, `WithSkipDotDirs`, `WithSymlinkPolicy`).
 - Errors are values. Metadata parse failures in a folder are collected, not raised.
 
 Dependency model:
 
-- markly depends on dirly for file discovery and on `gopkg.in/yaml.v3` and `github.com/pelletier/go-toml/v2` for frontmatter parsing.
+- markly depends on dirly (v1.3.0 or later) for file discovery and for reading folder files under a symlink policy, and on `gopkg.in/yaml.v3` and `github.com/pelletier/go-toml/v2` for frontmatter parsing.
 
 ## Core Types
 
@@ -250,6 +250,8 @@ for path, md := range allFiles {
 | `GetLoadOrder() ([]*MDFile, error)` | Topological sort of dependencies (Kahn's algorithm) |
 | `DetectCycles() []string` | Return cycle paths as formatted strings (e.g., "A -> B -> A") |
 | `GetAllWithDependencies(filename string, visited map[string]bool) ([]*MDFile, error)` | Transitive dependency resolution |
+| `Errors() map[string]error` | Per-file errors from discovery (parse failures, symlink policy refusals), keyed by relative path |
+| `SymlinkPolicy() SymlinkPolicy` | The symlink policy folder files are read with |
 
 **LoaderOptions:**
 
@@ -259,7 +261,18 @@ markly.WithDepKeys("my_custom_key", "another_key")
 
 // Custom separator for comma-delimited strings (default: ",")
 markly.WithDepSeparator("; ")
+
+// Symlink handling for folder reads (default: markly.FollowWithinRoot).
+// FollowAny keeps the v1.7.1 behavior; NoFollow refuses every symlink.
+markly.WithSymlinkPolicy(markly.FollowAny)
 ```
+
+Folder files are read through `dirly.Directory.Open`, so the
+policy applies to metadata parsing and to every lazy `LoadContent`.
+Under `FollowWithinRoot` and `NoFollow`, dirly opens the file through an
+`os.Root` at the resolved folder root. Refused files are skipped and
+recorded in `Errors()` with an error wrapping `ErrPathEscapesRoot` or
+`ErrSymlinkNotAllowed`.
 
 ## Dependency Graph Internals
 

@@ -12,7 +12,7 @@ This project keeps collaboration practical and respectful. Treat maintainers and
 
 ## Development Environment Setup
 
-1. Install Go 1.26 or later. Check with `go version`.
+1. Install Go 1.26.11 or later. Check with `go version`.
 2. Clone the repository. The module depends on dirly, its sibling library:
 
 ```bash
