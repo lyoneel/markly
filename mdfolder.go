@@ -16,16 +16,13 @@ import (
 // MDFolder represents a directory of Markdown files with optional dependency resolution.
 type MDFolder struct {
 	dir          *dirly.Directory    // Private field - wrapped, not embedded
-	files        map[string]*MDFile  // key = filename without extension
+	files        map[string]*MDFile  // key = slash path relative to the folder, with extension ("sub/a.md")
 	adjacencyMap map[string][]string // "A" -> ["B", "C"] means A depends on B, C
 	errors       map[string]error    // per-file metadata errors from the last load
 
 	// Customizable dependency parsing configuration (private)
 	depKeys      []string // Field names to check (e.g., ["depends", "dependencies"])
 	depSeparator string   // Separator for comma-separated strings (e.g., ",")
-
-	// Default file permissions - use dirly's defaults, no custom control needed
-	defaultPerm os.FileMode // 0644 by default
 
 	skipDotDirs bool // skip files inside dot-directories
 
@@ -94,7 +91,6 @@ func NewMDFolder(dirPath string, opts ...LoaderOption) (*MDFolder, error) {
 		errors:       make(map[string]error),
 		depKeys:      []string{"deps", "depends", "dependencies", "depends_on", "prerequisites"},
 		depSeparator: ",",
-		defaultPerm:  0644, // Standard file permissions
 
 		symlinkPolicy: DefaultSymlinkPolicy,
 	}

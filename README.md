@@ -8,7 +8,7 @@ Markdown file parsing and management with YAML and TOML frontmatter support.
 
 ## Overview
 
-The `markly` package provides tools for reading, parsing, and managing Markdown files with YAML or TOML frontmatter metadata. It supports lazy loading, dependency resolution between files, typed metadata access, and efficient batch operations using the `dirly` integration.
+The `markly` package provides tools for reading, parsing, and managing Markdown files with YAML or TOML frontmatter metadata. It supports lazy loading, dependency resolution between files, typed metadata access, and directory discovery through `dirly`.
 
 **Key Features:**
 - Automatic YAML/TOML frontmatter extraction with line number tracking and format detection
@@ -16,7 +16,6 @@ The `markly` package provides tools for reading, parsing, and managing Markdown 
 - ATX-style heading detection with line range information
 - Typed metadata access via `MDMetadata`
 - Directory-based file discovery with dependency graph resolution
-- Batch read/write operations for efficiency
 
 ## Supported Frontmatter Formats
 
@@ -63,21 +62,29 @@ active = true
 | `MDMetadata` | Typed accessor for frontmatter data with line ranges and format type |
 | `MDContent` | Parsed body with heading list and raw text |
 | `MDHeading` | One ATX heading with its line range |
-| `MDFolder` | Directory loader with dependency resolution, filtering, and batch operations |
+| `MDFolder` | Directory loader with dependency resolution and metadata filtering |
 
 Basic usage:
 
 ```go
 // Lazy: metadata parsed, content not loaded
 md := markly.NewMDFile("path/to/file.md")
-meta := md.GetMetadata()
-title := meta.GetString("title")
+meta, err := md.GetMetadata() // nil, nil when the file has no frontmatter
+if err != nil {
+    return err
+}
+if meta != nil {
+    fmt.Println(meta.GetString("title"))
+}
 
-// Load content on demand
-content, err := md.LoadContent()
+// Load content on demand, then read it
+if err := md.LoadContent(); err != nil {
+    return err
+}
+content, _ := md.GetContent()
 
 // Eager: load everything immediately
-md, err := markly.NewMDFileWithContent("path/to/file.md")
+eager, err := markly.NewMDFileWithContent("path/to/file.md")
 ```
 
 The complete type documentation, method tables, and loader options live in [DEVELOPMENT.md](DEVELOPMENT.md). The generated reference lives on pkg.go.dev.
@@ -99,7 +106,8 @@ prerequisites: "basics.md, concurrency.md"
 With a custom separator:
 
 ```yaml
-requires: "file1.md; file2.md"  // With markly.WithDepSeparator("; ")
+# With markly.WithDepKeys("requires") and markly.WithDepSeparator("; ")
+requires: "file1.md; file2.md"
 ```
 
 Resolution runs in four phases: discovery (paths only), graph building (metadata only), cycle detection (DFS), and topological sort (Kahn's algorithm). Content loads lazily on first access. The full resolution process and performance characteristics live in [DEVELOPMENT.md](DEVELOPMENT.md).
@@ -116,7 +124,7 @@ By default, the package checks these field names for dependencies (in order):
 Override with `WithDepKeys()`:
 
 ```go
-NewMDFolder(path, markly.WithDepKeys("my_custom_key"))
+folder, err := markly.NewMDFolder("./docs", markly.WithDepKeys("my_custom_key"))
 ```
 
 ## Line Number Tracking
@@ -126,17 +134,20 @@ All parsing preserves line numbers for error reporting and navigation:
 ```go
 md := markly.NewMDFile("file.md")
 
-// YAML frontmatter line range
-meta := md.GetMetadata()
-if meta != nil {
-    fmt.Printf("YAML from line %d to %d\n", meta.FromLine, meta.ToLine)
-}
-
-// Content loading and heading tracking
-content, err := md.LoadContent()
+// Frontmatter line range: the lines between the delimiters
+meta, err := md.GetMetadata()
 if err != nil {
     log.Fatal(err)
 }
+if meta != nil {
+    fmt.Printf("%s from line %d to %d\n", meta.GetType(), meta.FromLine, meta.ToLine)
+}
+
+// Content loading and heading tracking
+if err := md.LoadContent(); err != nil {
+    log.Fatal(err)
+}
+content, _ := md.GetContent()
 
 fmt.Printf("Content starts at line %d\n", md.GetContentFrom())
 
@@ -155,8 +166,9 @@ All operations return errors for proper error handling:
 | Operation | Possible Errors |
 |-----------|-----------------|
 | `NewMDFileWithContent()` | File not found (`os.IsNotExist`), parse errors |
-| `GetContent()` / `LoadContent()` | File not found, YAML parse errors, scanner errors (e.g., token too long) |
-| `GetMetadata()` | Returns nil if file doesn't exist or has no YAML frontmatter |
+| `LoadContent()` | File not found (`os.IsNotExist`), parse errors, a line longer than `markly.MaxLineLength` (wraps `bufio.ErrTooLong`) |
+| `GetContent()` | The `LoadContent()` errors; with lazy loading, an error until `LoadContent()` has run |
+| `GetMetadata()` | File not found (`os.IsNotExist`) or unreadable, parse errors; `nil, nil` when the file has no frontmatter |
 | `GetLoadOrder()` | Circular dependency detected |
 | `GetAllWithDependencies()` | Circular dependency, file not found |
 
@@ -164,19 +176,21 @@ All operations return errors for proper error handling:
 
 ```go
 md := markly.NewMDFile("nonexistent.md")
-meta := md.GetMetadata()  // Returns nil (no error)
+meta, err := md.GetMetadata() // meta is nil, err is a *fs.PathError
+if os.IsNotExist(err) {
+    // Handle missing file
+}
 
-content, err := md.LoadContent()
-if err != nil {
+if err := md.LoadContent(); err != nil {
     if os.IsNotExist(err) {
         // Handle missing file
-    } else if strings.Contains(err.Error(), "token too long") {
-        // Handle scanner error for very long lines
+    } else if errors.Is(err, bufio.ErrTooLong) {
+        // A line is longer than markly.MaxLineLength
     }
 }
 
 // Eager loading returns error immediately
-md, err := markly.NewMDFileWithContent("file.md")
+eager, err := markly.NewMDFileWithContent("file.md")
 if err != nil {
     log.Fatal(err)
 }
@@ -191,7 +205,7 @@ their frontmatter and body.
 
 ```go
 md := markly.NewMDFileFromString(content)        // YAML/TOML + body parsed immediately
-md := markly.NewMDFileFromBytes(data)            // same, from bytes
+fromBytes := markly.NewMDFileFromBytes(raw)      // same, from bytes
 
 meta, _ := md.GetMetadata()
 meta.SetString("title", "New Title")
@@ -417,7 +431,6 @@ The package includes comprehensive tests covering:
 - Cycle detection in complex DAGs
 - Metadata filtering by key-value pairs
 - Typed accessor methods (GetString, GetInt, GetBool, etc.)
-- Batch read/write operations
 - Line number tracking accuracy
 - Real-world scenarios (workflow structures, boolean fields, mixed arrays)
 
@@ -449,8 +462,15 @@ func main() {
     fmt.Printf("Processing %d files in dependency order:\n", len(orderedFiles))
     
     for _, md := range orderedFiles {
-        meta := md.GetMetadata()
-        
+        meta, err := md.GetMetadata()
+        if err != nil {
+            log.Printf("Error reading metadata: %v\n", err)
+            continue
+        }
+        if meta == nil {
+            continue // no frontmatter
+        }
+
         // Extract metadata
         title := meta.GetString("title")
         tags := meta.GetStringList("tags")
@@ -462,11 +482,11 @@ func main() {
         }
         
         // Load content (lazy - only when needed)
-        content, err := md.LoadContent()
-        if err != nil {
-            log.Printf("Error loading %s: %v\n", md.path, err)
+        if err := md.LoadContent(); err != nil {
+            log.Printf("Error loading content: %v\n", err) // err names the file
             continue
         }
+        content, _ := md.GetContent()
         
         fmt.Printf("Headings: %d\n", len(content.Headings))
         for _, h := range content.Headings {

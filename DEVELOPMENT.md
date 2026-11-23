@@ -56,16 +56,21 @@ md := markly.NewMDFile("path/to/file.md")
 formatType := md.Type  // "yaml", "toml", or "" if no frontmatter
 
 // Access metadata (triggers YAML/TOML parsing only)
-meta := md.GetMetadata()
-title := meta.GetString("title")
-tags := meta.GetStringList("tags")
-active := meta.GetBool("active")
-
-// Explicitly load content when needed
-content, err := md.LoadContent()
+meta, err := md.GetMetadata() // nil, nil when the file has no frontmatter
 if err != nil {
     log.Fatal(err)
 }
+if meta != nil {
+    title := meta.GetString("title")
+    tags := meta.GetStringList("tags")
+    active := meta.GetBool("active")
+}
+
+// Explicitly load content when needed
+if err := md.LoadContent(); err != nil {
+    log.Fatal(err)
+}
+content, _ := md.GetContent()
 headings := content.Headings
 rawBody := content.RawBody
 
@@ -74,7 +79,7 @@ mdWithContent, err := markly.NewMDFileWithContent("path/to/file.md")
 if err != nil {
     log.Fatal(err)
 }
-content := mdWithContent.GetContent() // Never returns error after successful creation
+eagerContent, _ := mdWithContent.GetContent() // No error after successful creation
 ```
 
 **Methods:**
@@ -84,7 +89,7 @@ content := mdWithContent.GetContent() // Never returns error after successful cr
 | `NewMDFile(path string) *MDFile` | Create with lazy loading enabled (metadata parsed, content not loaded) |
 | `NewMDFileWithContent(path string) (*MDFile, error)` | Eager load metadata and content immediately |
 | `SetLazyLoading(enabled bool)` | Toggle lazy loading behavior |
-| `GetMetadata() *MDMetadata` | Access parsed YAML metadata (nil if file doesn't exist) |
+| `GetMetadata() (*MDMetadata, error)` | Parsed frontmatter; `nil, nil` without frontmatter; an error for a missing (`os.IsNotExist`) or unreadable file |
 | `GetContent() (*MDContent, error)` | Get parsed content - returns error if lazy loading enabled and not loaded |
 | `LoadContent() error` | Explicitly trigger content loading |
 | `GetContentFrom() int` | Line number where content starts (after YAML frontmatter), 0 if not loaded |
@@ -102,7 +107,10 @@ Typed accessor for YAML/TOML frontmatter data stored as `map[string]any`. Includ
 
 ```go
 md := markly.NewMDFile("file.md")
-meta := md.GetMetadata()
+meta, err := md.GetMetadata()
+if err != nil || meta == nil {
+    return err // missing file, parse error, or no frontmatter
+}
 
 // Get format type
 format := meta.GetType()  // "yaml" or "toml"
@@ -122,8 +130,10 @@ rawValue := meta.Get("key")          // Raw interface{} value for custom handlin
 keys := meta.Keys()                  // All top-level keys as []string
 
 // Custom struct unmarshaling with yaml.v3 tags
-var config MyConfig
-err := meta.UnmarshalInto(&config)   // Uses yaml.v3 for optimal performance
+var config struct {
+    Title string `yaml:"title"`
+}
+err = meta.UnmarshalInto(&config)    // Uses yaml.v3 for optimal performance
 
 // Line range tracking
 fmt.Printf("YAML from line %d to %d\n", meta.FromLine, meta.ToLine)
@@ -164,10 +174,10 @@ Represents a single ATX-style heading (`#`, `##`, etc.).
 **Usage:**
 
 ```go
-content, err := md.LoadContent()
-if err != nil {
+if err := md.LoadContent(); err != nil {
     log.Fatal(err)
 }
+content, _ := md.GetContent()
 
 for _, heading := range content.Headings {
     fmt.Printf("%s at lines %d-%d\n", 
@@ -179,7 +189,7 @@ for _, heading := range content.Headings {
 
 ### MDFolder
 
-Directory-based Markdown file loader with dependency resolution and batch operations. Uses `dirly` internally for efficient file discovery.
+Directory-based Markdown file loader with dependency resolution and metadata filtering. Uses `dirly` internally for efficient file discovery.
 
 **Usage:**
 
@@ -191,13 +201,18 @@ if err != nil {
 }
 
 // Get all files (lazy loading enabled, metadata parsed immediately)
+// Keys are paths relative to the folder, with the extension: "sub/a.md"
 files := folder.GetAll()
-for _, md := range files {
-    fmt.Printf("%s: %d headings\n", md.path, len(md.GetContent().Headings))
+for path, md := range files {
+    if err := md.LoadContent(); err != nil {
+        log.Fatal(err)
+    }
+    content, _ := md.GetContent()
+    fmt.Printf("%s: %d headings\n", path, len(content.Headings))
 }
 
 // Custom dependency configuration
-folder, _ := markly.NewMDFolder(
+custom, _ := markly.NewMDFolder(
     "./docs",
     markly.WithDepKeys("requires_on"),      // Use custom field names
     markly.WithDepSeparator("; "),          // Use semicolon separator
@@ -233,9 +248,10 @@ folder.Iterate(func(md *markly.MDFile) {
 })
 
 // Get all files as a map
-allFiles := folder.GetAll() // Returns map[string]*MDFile
+allFiles := folder.GetAll() // map[string]*MDFile keyed by relative path
 for path, md := range allFiles {
-    fmt.Printf("%s: %d headings\n", path, len(md.GetContent().Headings))
+    meta, _ := md.GetMetadata()
+    fmt.Printf("%s: has frontmatter %t\n", path, meta != nil)
 }
 ```
 
@@ -292,7 +308,8 @@ prerequisites: "basics.md, concurrency.md"
 
 With custom separator:
 ```yaml
-requires: "file1.md; file2.md"  // With markly.WithDepSeparator("; ")
+# With markly.WithDepKeys("requires") and markly.WithDepSeparator("; ")
+requires: "file1.md; file2.md"
 ```
 
 ### Dependency Resolution Process

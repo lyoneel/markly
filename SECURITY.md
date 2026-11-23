@@ -2,10 +2,12 @@
 
 ## Supported Versions
 
+Security fixes land on the latest minor release.
+
 | Version | Supported |
 |---------|-----------|
-| 1.2.x   | Yes       |
-| < 1.2   | No        |
+| 1.7.x   | Yes       |
+| < 1.7   | No        |
 
 ## Reporting a Vulnerability
 

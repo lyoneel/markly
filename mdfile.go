@@ -781,8 +781,9 @@ func (md *MDFile) LoadContent() error {
 	return nil
 }
 
-// GetContent returns the parsed content. If lazy loading is enabled and content
-// hasn't been loaded yet, this method will trigger the load on first access.
+// GetContent returns the parsed content. With lazy loading enabled (the
+// NewMDFile default) it returns an error until LoadContent has run; with
+// lazy loading disabled it loads the content on first access.
 func (md *MDFile) GetContent() (*MDContent, error) {
 	if md.content != nil {
 		return md.content, nil
