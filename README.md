@@ -110,7 +110,7 @@ With a custom separator:
 requires: "file1.md; file2.md"
 ```
 
-Resolution runs in four phases: discovery (paths only), graph building (metadata only), cycle detection (DFS), and topological sort (Kahn's algorithm). Content loads lazily on first access. The full resolution process and performance characteristics live in [DEVELOPMENT.md](DEVELOPMENT.md).
+Resolution runs in four phases: discovery (paths only), graph building (metadata only), cycle detection (DFS), and topological sort (Kahn's algorithm). The graph walks take time linear in files plus dependencies, and their results are the same on every run. Content loads lazily on first access. The full resolution process and performance characteristics live in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Default Dependency Keys
 
@@ -165,10 +165,10 @@ All operations return errors for proper error handling:
 
 | Operation | Possible Errors |
 |-----------|-----------------|
-| `NewMDFileWithContent()` | File not found (`os.IsNotExist`), parse errors |
-| `LoadContent()` | File not found (`os.IsNotExist`), parse errors, a line longer than `markly.MaxLineLength` (wraps `bufio.ErrTooLong`) |
+| `NewMDFileWithContent()` | File not found (`os.IsNotExist`), parse errors, a file over the size limit (`markly.ErrFileTooLarge`) |
+| `LoadContent()` | File not found (`os.IsNotExist`), parse errors, a line longer than `markly.MaxLineLength` (wraps `bufio.ErrTooLong`), a file over the size limit (`markly.ErrFileTooLarge`) |
 | `GetContent()` | The `LoadContent()` errors; with lazy loading, an error until `LoadContent()` has run |
-| `GetMetadata()` | File not found (`os.IsNotExist`) or unreadable, parse errors; `nil, nil` when the file has no frontmatter |
+| `GetMetadata()` | File not found (`os.IsNotExist`) or unreadable, parse errors, a file over the size limit (`markly.ErrFileTooLarge`); `nil, nil` when the file has no frontmatter |
 | `Save()` / `SaveAtomic()` / `Render()` | `markly.ErrMetadataSerialization` when the metadata cannot be serialized (the file is left untouched), write errors |
 | Single-line edits (`AppendLine`, `InsertLine`, `SetSectionHeading`, `SetSectionBullet`, `InsertLineUnderHeading`, `SetFirstHeading`, `RewriteCheckboxTitle`) | `markly.ErrMultilineText` when the text contains `\n` or `\r` |
 | `SetCheckboxMarker()` | `markly.ErrInvalidCheckboxMarker` for a marker other than `' '`, `'x'`, `'X'`, `'~'` |
@@ -253,6 +253,29 @@ md := markly.NewMDFileFromString(content,
     markly.WithFenceAwareHeadings(),  // skip headings inside ``` / ~~~ fences
 )
 ```
+
+### File Size Limit
+
+Documents read from disk are limited to `markly.DefaultMaxFileSize`
+(64 MiB, four times `markly.MaxLineLength`). A larger file, or one that
+grows past the limit while it is read, fails `GetMetadata` and
+`LoadContent` with an error wrapping `markly.ErrFileTooLarge`; markly
+reads at most one byte past the limit, so an oversized file cannot
+exhaust memory. A limit of 0 or less disables the check. In-memory
+documents are already loaded and are not limited.
+
+```go
+md := markly.NewMDFile("big.md", markly.WithMaxFileSize(8<<20)) // 8 MiB
+if _, err := md.GetMetadata(); errors.Is(err, markly.ErrFileTooLarge) {
+    // skip the file
+}
+
+folder, err := markly.NewMDFolder("./vault", markly.WithFolderMaxFileSize(8<<20))
+// files over the limit are skipped and reported in folder.Errors()
+```
+
+The `validate` package applies `markly.DefaultMaxFileSize` to the
+documents, schemas and vocabulary files it reads.
 
 `WithRawScalars()` converts `!!bool`, `!!int`, `!!float`, `!!null`
 scalars to their natural types but keeps everything else (dates,
@@ -454,6 +477,21 @@ Run tests with race detection:
 
 ```bash
 go test -race ./...
+```
+
+CI runs on every merge request and on the default branch, in the
+`golang:1.26.11` image pinned by digest: `go mod verify`, a `gofmt -l`
+check, `go vet`, `staticcheck` (2026.2.2), `govulncheck` (v1.10.0),
+`go test -race -cover`, and `go build`. Run the same checks locally
+before sending a change:
+
+```bash
+go mod verify
+test -z "$(gofmt -l .)"
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+go test -race -cover ./...
 ```
 
 The package includes comprehensive tests covering:

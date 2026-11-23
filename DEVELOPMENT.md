@@ -26,12 +26,12 @@ The package is a single root package with these source files:
 Design patterns:
 
 - Lazy loading by default. Constructors parse metadata only; content loads on first `LoadContent()` or `GetContent()` call.
-- Functional options on constructors and the folder loader (`WithRawScalars`, `WithFenceAwareHeadings`, `WithDepKeys`, `WithDepSeparator`, `WithSkipDotDirs`, `WithSymlinkPolicy`).
+- Functional options on constructors and the folder loader (`WithRawScalars`, `WithFenceAwareHeadings`, `WithMaxFileSize`, `WithDepKeys`, `WithDepSeparator`, `WithSkipDotDirs`, `WithSymlinkPolicy`, `WithFolderMaxFileSize`).
 - Errors are values. Metadata parse failures in a folder are collected, not raised.
 
 Dependency model:
 
-- markly depends on dirly (v1.3.0 or later) for file discovery and for reading folder files under a symlink policy, and on `gopkg.in/yaml.v3` and `github.com/pelletier/go-toml/v2` for frontmatter parsing.
+- markly depends on dirly (v1.3.0 or later) for file discovery and for reading folder files under a symlink policy, and on `go.yaml.in/yaml/v3` (the maintained successor of the archived `gopkg.in/yaml.v3`) and `github.com/pelletier/go-toml/v2` for frontmatter parsing.
 
 ## Core Types
 
@@ -129,11 +129,11 @@ rawList := meta.GetList("items")     // Returns []any (any type)
 rawValue := meta.Get("key")          // Raw interface{} value for custom handling
 keys := meta.Keys()                  // All top-level keys as []string
 
-// Custom struct unmarshaling with yaml.v3 tags
+// Custom struct unmarshaling with yaml tags (go.yaml.in/yaml/v3)
 var config struct {
     Title string `yaml:"title"`
 }
-err = meta.UnmarshalInto(&config)    // Uses yaml.v3 for optimal performance
+err = meta.UnmarshalInto(&config)    // decodes with go.yaml.in/yaml/v3
 
 // Line range tracking
 fmt.Printf("YAML from line %d to %d\n", meta.FromLine, meta.ToLine)
@@ -281,6 +281,10 @@ markly.WithDepSeparator("; ")
 // Symlink handling for folder reads (default: markly.FollowWithinRoot).
 // FollowAny keeps the v1.7.1 behavior; NoFollow refuses every symlink.
 markly.WithSymlinkPolicy(markly.FollowAny)
+
+// Size limit for every file the folder reads (default:
+// markly.DefaultMaxFileSize, 64 MiB; 0 or less disables it).
+markly.WithFolderMaxFileSize(8 << 20)
 ```
 
 Folder files are read through `dirly.Directory.Open`, so the
@@ -315,9 +319,18 @@ requires: "file1.md; file2.md"
 ### Dependency Resolution Process
 
 1. **Discovery**: Walk directory and load metadata for all `.md` files (content NOT loaded)
-2. **Graph Building**: Extract dependencies from metadata, build adjacency map
-3. **Cycle Detection**: Check for circular dependencies using DFS
+2. **Graph Building**: Extract dependencies from metadata, build adjacency map (repeated dependencies count once)
+3. **Cycle Detection**: Check for circular dependencies using an iterative DFS
 4. **Topological Sort**: Use Kahn's algorithm to determine correct load order
+
+Each walk first numbers the files in name order and lays the
+dependency lists out in flat arrays, then runs in time linear in files
+plus dependencies (one sort of the names aside). Because the numbering
+follows the names, `GetLoadOrder`, `DetectCycles`, and
+`GetAllWithDependencies` return the same result on every run, and the
+iterative walks handle chains of any depth without recursion.
+`BenchmarkGraph` in `mdfolder_graph_bench_test.go` measures them on
+1,000- and 10,000-file graphs.
 
 ### Performance Characteristics
 
