@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -321,7 +322,15 @@ func CollectDocs(target string) ([]string, error) {
 	return matched, nil
 }
 
+// cleanGlob normalizes a glob pattern the way filepath.WalkDir reports
+// paths: slashes only, no "./" prefix or "." segments, no doubled
+// separators. Without it "./docs/*.md" never matched "docs/a.md".
+func cleanGlob(pattern string) string {
+	return path.Clean(filepath.ToSlash(pattern))
+}
+
 func globRecursive(pattern string) ([]string, error) {
+	pattern = cleanGlob(pattern)
 	regex, err := globToRegex(pattern)
 	if err != nil {
 		return nil, err
